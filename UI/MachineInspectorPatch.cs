@@ -5,6 +5,8 @@ using System;
 using System.Reflection;
 using HarmonyLib;
 using Mafi;
+using Mafi.Collections;
+using Mafi.Core;
 using Mafi.Core.Entities;
 using Mafi.Core.Factory.Machines;
 using Mafi.Core.Syncers;
@@ -29,7 +31,6 @@ namespace PowerThresholdMod.UI
                 return;
             }
 
-            // Hook MachineInspector constructor
             var ctors = inspectorType.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
             if (ctors.Length > 0)
             {
@@ -64,8 +65,8 @@ namespace PowerThresholdMod.UI
                 slider.MinWidth(new Px(140));
                 slider.ValueFormatter(Option.Some<Func<Percent, LocStrFormatted>>(p => LocStrFormatted.Empty));
 
-                var lblVal = new Label(new LocStrFormatted("< 20%")).MinWidth(new Px(65));
-                var btnMode = new ButtonText(new LocStrFormatted("[ % ]"), null).MinWidth(new Px(45));
+                var lblVal = new Label(new LocStrFormatted("Pause if < 20%")).MinWidth(new Px(115));
+                var btnMode = new ButtonText(new LocStrFormatted("[ % ]"), null).MinWidth(new Px(65));
                 rowSlider.Add(btnMode, slider, lblVal);
 
                 var lblStatus = new Label(new LocStrFormatted("Status: Inheriting Global"));
@@ -102,7 +103,11 @@ namespace PowerThresholdMod.UI
                     if (machine == null || PowerGovernorManager.Instance == null) return;
                     var custom = PowerGovernorManager.Instance.GetOrCreateInstanceOverride(machine);
                     custom.Mode = (custom.Mode == ThresholdMode.Percentage) ? ThresholdMode.MegaWatts : ThresholdMode.Percentage;
-                    slider.Range(0f, custom.Mode == ThresholdMode.Percentage ? 100f : 50f);
+                    float maxRange = custom.Mode == ThresholdMode.Percentage
+                        ? 100f
+                        : Math.Max(100f, PowerGovernorManager.Instance.LastCapacityMw);
+                    slider.Range(0f, maxRange);
+                    slider.Value(custom.ThresholdValue, notify: false);
                     btnMode.Value(new LocStrFormatted(custom.Mode == ThresholdMode.Percentage ? "[ % ]" : "[ MW ]"));
                     lblVal.Value(new LocStrFormatted(FormatRuleValue(custom)));
                     PowerGovernorManager.Instance.SetInstanceOverride(machine, custom);
@@ -146,7 +151,11 @@ namespace PowerThresholdMod.UI
 
             chkOverride.Value(custom.HasOverride);
 
-            slider.Range(0f, effective.Mode == ThresholdMode.Percentage ? 100f : 50f);
+            float maxRange = effective.Mode == ThresholdMode.Percentage
+                ? 100f
+                : Math.Max(100f, PowerGovernorManager.Instance.LastCapacityMw);
+
+            slider.Range(0f, maxRange);
             slider.Value(effective.ThresholdValue, notify: false);
             slider.Visible(custom.HasOverride);
 
@@ -167,9 +176,14 @@ namespace PowerThresholdMod.UI
             var effective = PowerGovernorManager.Instance.GetEffectiveRule(machine);
             bool isThrottled = PowerGovernorManager.Instance.IsMachineThrottled(machine);
 
+            float prodMw = PowerGovernorManager.Instance.LastProductionMw;
+            float prodPct = PowerGovernorManager.Instance.LastProductionPercent;
+
             if (isThrottled)
             {
-                lblStatus.Value(new LocStrFormatted("Status: ⏸ Auto-Throttled (Grid reserve below threshold)"));
+                string metricStr = (effective.Mode == ThresholdMode.Percentage) ? $"{prodPct:F1}%" : $"{prodMw:F1} MW";
+                string threshStr = (effective.Mode == ThresholdMode.Percentage) ? $"{effective.ThresholdValue:F0}%" : $"{effective.ThresholdValue:F0} MW";
+                lblStatus.Value(new LocStrFormatted($"Status: ⏸ Auto-Paused (Production {metricStr} < {threshStr})"));
             }
             else if (custom.HasOverride)
             {
@@ -184,15 +198,15 @@ namespace PowerThresholdMod.UI
         private static string FormatRuleValue(MachinePowerRule rule)
         {
             return (rule.Mode == ThresholdMode.Percentage)
-                ? $"< {rule.ThresholdValue:F0}%"
-                : $"< {rule.ThresholdValue:F0} MW";
+                ? $"Pause if < {rule.ThresholdValue:F0}%"
+                : $"Pause if < {rule.ThresholdValue:F0} MW";
         }
 
         private static string FormatRuleValue(MachineInstanceOverride custom)
         {
             return (custom.Mode == ThresholdMode.Percentage)
-                ? $"< {custom.ThresholdValue:F0}%"
-                : $"< {custom.ThresholdValue:F0} MW";
+                ? $"Pause if < {custom.ThresholdValue:F0}%"
+                : $"Pause if < {custom.ThresholdValue:F0} MW";
         }
     }
 }
