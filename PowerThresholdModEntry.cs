@@ -21,7 +21,7 @@ namespace PowerThresholdMod
         public ModManifest Manifest { get; }
         public bool IsUiOnly => false;
         public Option<IConfig> ModConfig => Option<IConfig>.None;
-        public ModJsonConfig JsonConfig => null;
+        public ModJsonConfig JsonConfig { get; }
 
         private PowerGovernorManager m_governorManager;
         private ProtosDb m_protosDb;
@@ -31,6 +31,7 @@ namespace PowerThresholdMod
         public PowerThresholdModEntry(ModManifest manifest)
         {
             Manifest = manifest;
+            JsonConfig = new ModJsonConfig(this);
             Log.Info("PowerThresholdMod: Instantiated!");
         }
 
