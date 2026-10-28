@@ -25,6 +25,7 @@ namespace PowerThresholdMod.UI
         private bool m_initialized;
         private bool m_escapeRegistered;
         private int m_openFrame;
+        private int m_frameCounter;
 
         public void Initialize(HudController hudController, UiRoot uiRoot, IRootEscapeManager escapeManager, ProtosDb protosDb, PowerGovernorManager governorManager)
         {
@@ -106,6 +107,17 @@ namespace PowerThresholdMod.UI
             {
                 ToggleWindow();
             }
+
+            // Periodically refresh window status display every ~15 render frames
+            if (PowerGovernorWindow.IsWindowOpen)
+            {
+                m_frameCounter++;
+                if (m_frameCounter >= 15)
+                {
+                    m_frameCounter = 0;
+                    PowerGovernorWindow.RefreshStatusIfOpen();
+                }
+            }
         }
 
         public void ToggleWindow()
@@ -136,7 +148,8 @@ namespace PowerThresholdMod.UI
                 return false;
             }
             PowerGovernorWindow.CloseWindow();
-            clearEscapeHandler();
+            // Note: IRootEscapeHandler is automatically unregistered by COI when returning true.
+            m_escapeRegistered = false;
             return true;
         }
 

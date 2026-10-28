@@ -1,9 +1,8 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using Mafi;
 using Mafi.Collections;
-using Mafi.Core;
 using Mafi.Core.Entities;
 using Mafi.Core.Factory.ElectricPower;
 using Mafi.Core.Factory.Machines;
@@ -18,23 +17,28 @@ namespace PowerThresholdMod.Engine
         private readonly IElectricityManager m_electricityManager;
         private readonly EntitiesManager m_entitiesManager;
 
-        // Keyed by MachineProto.Id.Value (string)
-        public Dictionary<string, MachinePowerRule> GlobalRules { get; } = new Dictionary<string, MachinePowerRule>();
+        public IElectricityManager ElectricityManager => m_electricityManager;
+        public EntitiesManager EntitiesManager => m_entitiesManager;
 
-        // Keyed by Machine EntityId.Value (int)
+        public Dictionary<string, MachinePowerRule> GlobalRules { get; } = new Dictionary<string, MachinePowerRule>();
         public Dictionary<int, MachineInstanceOverride> InstanceOverrides { get; } = new Dictionary<int, MachineInstanceOverride>();
 
-        // Tracks machines that were paused by the Governor (so we never unpause player-manually-paused machines)
+        // Set of entity IDs currently throttled (paused) by our governor
         private readonly HashSet<int> m_throttledByMod = new HashSet<int>();
 
-        private uint m_stepCounter = 0;
-        private const uint CHECK_INTERVAL_STEPS = 30; // ~1 second of game time
+        private const int CHECK_INTERVAL_STEPS = 20; // Check every ~20 simulation steps (~1 sec)
+        private int m_stepCounter;
 
-        // Live grid metrics for UI
         public float LastCapacityMw { get; private set; }
         public float LastDemandedMw { get; private set; }
+        public float LastConsumedMw { get; private set; }
         public float LastReserveMw { get; private set; }
         public float LastReservePercent { get; private set; }
+
+        public Electricity LastCapacity { get; private set; }
+        public Electricity LastDemanded { get; private set; }
+        public Electricity LastConsumed { get; private set; }
+        public Electricity LastReserve { get; private set; }
 
         public PowerGovernorManager(IElectricityManager electricityManager, EntitiesManager entitiesManager)
         {
@@ -116,27 +120,33 @@ namespace PowerThresholdMod.Engine
 
         public void OnSimUpdate()
         {
+            if (m_electricityManager == null || m_entitiesManager == null)
+            {
+                return;
+            }
+
+            // Read live electricity grid stats (1 kW = 1 in Electricity.Value)
+            Electricity capacity = m_electricityManager.GenerationCapacityThisTick;
+            Electricity demanded = m_electricityManager.DemandedThisTick;
+            Electricity consumed = m_electricityManager.ConsumedThisTick;
+
+            LastCapacity = capacity;
+            LastDemanded = demanded;
+            LastConsumed = consumed;
+            LastReserve = capacity - demanded;
+
+            LastCapacityMw = (float)capacity.Value / 1000f;
+            LastDemandedMw = (float)demanded.Value / 1000f;
+            LastConsumedMw = (float)consumed.Value / 1000f;
+            LastReserveMw = LastCapacityMw - LastDemandedMw;
+            LastReservePercent = LastCapacityMw > 0.0001f ? (LastReserveMw / LastCapacityMw) * 100f : 0f;
+
             m_stepCounter++;
             if (m_stepCounter < CHECK_INTERVAL_STEPS)
             {
                 return;
             }
             m_stepCounter = 0;
-
-            if (m_electricityManager == null || m_entitiesManager == null)
-            {
-                return;
-            }
-
-            // Read live electricity grid stats
-            Electricity capacity = m_electricityManager.GenerationCapacityThisTick;
-            Electricity demanded = m_electricityManager.DemandedThisTick;
-
-            // In COI, Electricity values are in Kw / scaled quantities
-            LastCapacityMw = (float)capacity.Quantity.Value / 1000f;
-            LastDemandedMw = (float)demanded.Quantity.Value / 1000f;
-            LastReserveMw = LastCapacityMw - LastDemandedMw;
-            LastReservePercent = LastCapacityMw > 0.001f ? (LastReserveMw / LastCapacityMw) * 100f : 0f;
 
             // Enumerate all active machines
             foreach (Machine machine in m_entitiesManager.GetAllEntitiesOfType<Machine>())
@@ -181,7 +191,7 @@ namespace PowerThresholdMod.Engine
                     // Check if grid fell below Threshold
                     if (currentMetric < threshold)
                     {
-                        // Only throttle if player hasn't already paused it
+                        // Only throttle if player hasn't manually paused it
                         if (machine.IsNotPaused)
                         {
                             m_throttledByMod.Add(machineId);
@@ -230,7 +240,6 @@ namespace PowerThresholdMod.Engine
 
                 // Simple JSON reading without heavy external dependency
                 string json = File.ReadAllText(path);
-                // We will populate rules as machines are encountered or on window open
             }
             catch (Exception ex)
             {

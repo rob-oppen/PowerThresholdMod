@@ -7,8 +7,10 @@ using System.Linq;
 using Mafi;
 using Mafi.Collections;
 using Mafi.Core;
+using Mafi.Core.Factory.ElectricPower;
 using Mafi.Core.Factory.Machines;
 using Mafi.Core.Prototypes;
+using Mafi.Core.Syncers;
 using Mafi.Localization;
 using Mafi.Unity.UiToolkit;
 using Mafi.Unity.UiToolkit.Component;
@@ -53,6 +55,7 @@ namespace PowerThresholdMod.UI
             if (!s_instance.IsOpen)
             {
                 s_instance.Open(uiRoot);
+                RefreshStatusIfOpen();
             }
         }
 
@@ -61,6 +64,15 @@ namespace PowerThresholdMod.UI
             if (s_instance != null && s_instance.IsOpen)
             {
                 s_instance.Close();
+            }
+        }
+
+        public static void RefreshStatusIfOpen()
+        {
+            if (s_instance != null && s_instance.IsOpen && s_instance.m_manager?.ElectricityManager != null)
+            {
+                var em = s_instance.m_manager.ElectricityManager;
+                s_instance.UpdateStatusText(em.DemandedThisTick, em.ConsumedThisTick, em.GenerationCapacityThisTick);
             }
         }
 
@@ -75,6 +87,18 @@ namespace PowerThresholdMod.UI
             EnablePinning();
 
             buildUi();
+
+            // Observe electricity manager changes reactively every simulation tick
+            if (m_manager?.ElectricityManager != null)
+            {
+                this.Observe(() => m_manager.ElectricityManager.DemandedThisTick)
+                    .Observe(() => m_manager.ElectricityManager.ConsumedThisTick)
+                    .Observe(() => m_manager.ElectricityManager.GenerationCapacityThisTick)
+                    .Do((Electricity demand, Electricity consumed, Electricity capacity) =>
+                    {
+                        UpdateStatusText(demand, consumed, capacity);
+                    });
+            }
         }
 
         private void buildUi()
@@ -84,9 +108,9 @@ namespace PowerThresholdMod.UI
             headerPanel.Body.PaddingTopBottom(3.pt()).Gap(4.px());
 
             m_lblGridStatus = new Label(new LocStrFormatted("Grid Status: Calculating..."));
-            m_lblCapacity = new Label(new LocStrFormatted("Capacity: 0.0 MW"));
-            m_lblDemand = new Label(new LocStrFormatted("Demand: 0.0 MW"));
-            m_lblReserve = new Label(new LocStrFormatted("Net Headroom: 0.0 MW (0.0%)"));
+            m_lblCapacity = new Label(new LocStrFormatted("Capacity: --"));
+            m_lblDemand = new Label(new LocStrFormatted("Demand: --"));
+            m_lblReserve = new Label(new LocStrFormatted("Net Headroom: --"));
 
             var statusRow1 = new Row().AlignItemsCenter().Gap(10.px());
             statusRow1.Add(m_lblGridStatus);
@@ -99,6 +123,13 @@ namespace PowerThresholdMod.UI
 
             headerPanel.BodyAdd(statusRow1, statusRow2, statusRow3);
             AddPanel(headerPanel);
+
+            // Populate initial status immediately
+            if (m_manager?.ElectricityManager != null)
+            {
+                var em = m_manager.ElectricityManager;
+                UpdateStatusText(em.DemandedThisTick, em.ConsumedThisTick, em.GenerationCapacityThisTick);
+            }
 
             // 2. Machine Thresholds Panel
             var rulesPanel = new PanelWithHeader(new LocStrFormatted("Global Machine Thresholds"));
@@ -160,34 +191,29 @@ namespace PowerThresholdMod.UI
             AddPanel(rulesPanel);
         }
 
-        private static string FormatRuleValue(MachinePowerRule rule)
+        public void UpdateStatusText(Electricity demand, Electricity consumed, Electricity capacity)
         {
-            return (rule.Mode == ThresholdMode.Percentage)
-                ? $"< {rule.ThresholdValue:F0}%"
-                : $"< {rule.ThresholdValue:F0} MW";
-        }
+            if (m_lblCapacity == null) return;
 
-        public override bool InputUpdate()
-        {
-            bool res = base.InputUpdate();
-            updateStatusText();
-            return res;
-        }
+            Electricity reserve = capacity - demand;
+            int capKw = capacity.Value;
+            int demKw = demand.Value;
+            int resKw = reserve.Value;
+            float pct = capKw > 0 ? ((float)resKw / (float)capKw) * 100f : 0f;
 
-        private void updateStatusText()
-        {
-            if (m_manager == null || m_lblCapacity == null) return;
+            float capMw = (float)capKw / 1000f;
+            float demMw = (float)demKw / 1000f;
+            float resMw = (float)resKw / 1000f;
 
-            float cap = m_manager.LastCapacityMw;
-            float dem = m_manager.LastDemandedMw;
-            float reserve = m_manager.LastReserveMw;
-            float pct = m_manager.LastReservePercent;
+            string capStr = (capKw >= 1000) ? $"{capMw:F2} MW ({capacity.Format()})" : capacity.Format().ToString();
+            string demStr = (demKw >= 1000) ? $"{demMw:F2} MW ({demand.Format()})" : demand.Format().ToString();
+            string resStr = (resKw >= 1000) ? $"{resMw:F2} MW ({pct:F1}%)" : $"{reserve.Format()} ({pct:F1}%)";
 
-            m_lblCapacity.Value(new LocStrFormatted($"Capacity: {cap:F1} MW"));
-            m_lblDemand.Value(new LocStrFormatted($"Demand: {dem:F1} MW"));
-            m_lblReserve.Value(new LocStrFormatted($"Net Reserve: {reserve:F1} MW ({pct:F1}%)"));
+            m_lblCapacity.Value(new LocStrFormatted($"Capacity: {capStr}"));
+            m_lblDemand.Value(new LocStrFormatted($"Demand: {demStr}"));
+            m_lblReserve.Value(new LocStrFormatted($"Net Reserve: {resStr}"));
 
-            if (reserve < 0)
+            if (resKw < 0)
             {
                 m_lblGridStatus.Value(new LocStrFormatted("Grid Status: ⚠️ CRITICAL BROWNOUT"));
             }
@@ -199,6 +225,13 @@ namespace PowerThresholdMod.UI
             {
                 m_lblGridStatus.Value(new LocStrFormatted("Grid Status: ✔ HEALTHY"));
             }
+        }
+
+        private static string FormatRuleValue(MachinePowerRule rule)
+        {
+            return (rule.Mode == ThresholdMode.Percentage)
+                ? $"< {rule.ThresholdValue:F0}%"
+                : $"< {rule.ThresholdValue:F0} MW";
         }
     }
 }

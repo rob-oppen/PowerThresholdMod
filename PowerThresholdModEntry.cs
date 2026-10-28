@@ -30,6 +30,7 @@ namespace PowerThresholdMod
         private UiRoot m_uiRoot;
         private Harmony m_harmony;
         private GameObject m_hostObj;
+        private ISimLoopEvents m_simLoopEvents;
 
         public PowerThresholdModEntry(ModManifest manifest)
         {
@@ -63,7 +64,7 @@ namespace PowerThresholdMod
                 var entitiesManager = resolver.TryResolve<EntitiesManager>().ValueOrNull
                     ?? resolver.TryResolve<IEntitiesManager>().ValueOrNull as EntitiesManager;
 
-                var simLoopEvents = resolver.TryResolve<ISimLoopEvents>().ValueOrNull;
+                m_simLoopEvents = resolver.TryResolve<ISimLoopEvents>().ValueOrNull;
                 m_uiRoot = resolver.TryResolve<UiRoot>().ValueOrNull;
 
                 if (electricityManager == null)
@@ -83,10 +84,11 @@ namespace PowerThresholdMod
                 // Instantiate engine
                 m_governorManager = new PowerGovernorManager(electricityManager, entitiesManager);
 
-                // Hook game simulation update loop for power monitoring and throttling
-                if (simLoopEvents != null)
+                // Hook simulation loop (UpdateEnd is called after entities demand power, ensuring accurate tick metrics)
+                if (m_simLoopEvents != null)
                 {
-                    simLoopEvents.Update.Add(this, m_governorManager.OnSimUpdate);
+                    m_simLoopEvents.UpdateEnd.AddNonSaveable(this, onSimUpdate);
+                    Log.Info("PowerThresholdMod: Successfully hooked simulation UpdateEnd loop via AddNonSaveable!");
                 }
 
                 // Apply Harmony patches for MachineInspector UI integration
@@ -116,6 +118,11 @@ namespace PowerThresholdMod
             }
         }
 
+        private void onSimUpdate()
+        {
+            m_governorManager?.OnSimUpdate();
+        }
+
         public void MigrateJsonConfig(VersionSlim savedVersion, Dict<string, object> savedValues)
         {
         }
@@ -124,6 +131,10 @@ namespace PowerThresholdMod
         {
             try
             {
+                if (m_simLoopEvents != null)
+                {
+                    m_simLoopEvents.UpdateEnd.RemoveNonSaveable(this, onSimUpdate);
+                }
                 m_harmony?.UnpatchAll("com.captainofindustry.powerthreshold");
                 m_governorManager?.SaveSettings();
                 if (m_hostObj != null)
