@@ -62,6 +62,7 @@ namespace PowerThresholdMod.UI
                 var slider = new Slider();
                 slider.Range(0f, 100f);
                 slider.MinWidth(new Px(140));
+                slider.ValueFormatter(Option.Some<Func<Percent, LocStrFormatted>>(p => LocStrFormatted.Empty));
 
                 var lblVal = new Label(new LocStrFormatted("< 20%")).MinWidth(new Px(65));
                 var btnMode = new ButtonText(new LocStrFormatted("[ % ]"), null).MinWidth(new Px(45));
@@ -84,12 +85,13 @@ namespace PowerThresholdMod.UI
                     refreshMachineControls(machine, chkOverride, slider, lblVal, btnMode, lblStatus);
                 });
 
-                slider.OnValueChanged((val, prev) =>
+                // Note: Mafi Slider passes (prevValue, newValue) to OnValueChanged
+                slider.OnValueChanged((prev, current) =>
                 {
                     var machine = inspector.Entity;
                     if (machine == null || PowerGovernorManager.Instance == null) return;
                     var custom = PowerGovernorManager.Instance.GetOrCreateInstanceOverride(machine);
-                    custom.ThresholdValue = (float)Math.Round(val, 0);
+                    custom.ThresholdValue = (float)Math.Round(current, 0);
                     PowerGovernorManager.Instance.SetInstanceOverride(machine, custom);
                     lblVal.Value(new LocStrFormatted(FormatRuleValue(custom)));
                 });

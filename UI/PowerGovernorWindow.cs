@@ -157,7 +157,9 @@ namespace PowerThresholdMod.UI
                 var slider = new Slider();
                 slider.Range(0f, rule.Mode == ThresholdMode.Percentage ? 100f : 50f);
                 slider.Value(rule.ThresholdValue, notify: false);
-                slider.MinWidth(new Px(160));
+                slider.MinWidth(new Px(150));
+                // Silence slider's redundant internal label so only our descriptive label is shown
+                slider.ValueFormatter(Option.Some<Func<Percent, LocStrFormatted>>(p => LocStrFormatted.Empty));
 
                 var lblValue = new Label(new LocStrFormatted(FormatRuleValue(rule))).MinWidth(new Px(75));
 
@@ -167,9 +169,10 @@ namespace PowerThresholdMod.UI
                     m_manager.SaveSettings();
                 });
 
-                slider.OnValueChanged((val, prev) =>
+                // Note: Mafi Slider passes (prevValue, newValue) to OnValueChanged
+                slider.OnValueChanged((prev, current) =>
                 {
-                    rule.ThresholdValue = (float)Math.Round(val, 0);
+                    rule.ThresholdValue = (float)Math.Round(current, 0);
                     lblValue.Value(new LocStrFormatted(FormatRuleValue(rule)));
                     m_manager.SaveSettings();
                 });
