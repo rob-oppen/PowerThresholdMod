@@ -187,7 +187,7 @@ namespace PowerThresholdMod.UI
             var guideContent = buildGuideTab();
 
             tabContainer.AddTab(new LocStrFormatted("⚡ Building Rules"), rulesContent, scroll: false);
-            tabContainer.AddTab(new LocStrFormatted("📖 Guide & Help"), guideContent, scroll: true);
+            tabContainer.AddTab(new LocStrFormatted("📖 Guide & Help"), guideContent, scroll: false);
 
             Body.Add(tabContainer);
 
@@ -396,20 +396,7 @@ namespace PowerThresholdMod.UI
             ));
             card3.Add(sec3Header, p3);
 
-            // Section 4: Vehicles vs Static Grid Electricity
-            var card4 = createCard();
-            var sec4Header = new Row().AlignItemsCenter().Gap(6.px());
-            sec4Header.Add(new Icon(Assets.Unity.UserInterface.General.Warning_v2_svg).Size(18.px(), 18.px()));
-            sec4Header.Add(new Label(new LocStrFormatted("4. Important: Static Buildings vs Mining Vehicles")).FontBold());
-
-            var p4 = new Label(new LocStrFormatted(
-                "• The electric grid powers static buildings, smelters, labs, computing mainframes, and conveyor equipment.\n" +
-                "• Mining excavators, diggers, and haul trucks in Captain of Industry run on DIESEL (or Hydrogen), NOT the electric grid.\n" +
-                "• If excavators stop, check your Fuel Stations and Oil Refinery diesel output, not the power grid!"
-            ));
-            card4.Add(sec4Header, p4);
-
-            col.Add(titleRow, card1, card2, card3, card4);
+            col.Add(titleRow, card1, card2, card3);
             scroll.Add(col);
             return scroll;
         }
@@ -500,4 +487,5 @@ namespace PowerThresholdMod.UI
         }
     }
 }
+
 
