@@ -1,0 +1,18 @@
+{
+  "id": "PowerThresholdMod",
+  "version": "1.0.0",
+  "display_name": "Power Threshold Governor",
+  "description_short": "Automatically pause or unpause machines based on electric grid capacity and headroom.",
+  "description_long": "<b>Power Threshold Governor</b>\n\nAllows players to configure smart electricity thresholds (either as a percentage of total grid output or as an absolute Megawatt headroom reserve) to automatically throttle high-draw machines (such as Smelters, Blast Furnaces, Electric Arc Furnaces, Electrolyzers, etc.) during power strain or brownouts.\n\n<b>Features:</b>\n- <b>Dedicated Manager Window:</b> View live grid capacity, demand, and reserve with custom rules per machine type (Press Shift+P).\n- <b>Localized Machine Override:</b> Click any machine to set instance-specific overrides directly in its inspector.\n- <b>Hysteresis Protection:</b> Built-in buffer prevents rapid flickering between on and off states.",
+  "authors": [
+    "User"
+  ],
+  "primary_dlls": [
+    "0Harmony.dll",
+    "PowerThresholdMod.dll"
+  ],
+  "non_locking_dll_load": true,
+  "can_add_to_saved_game": true,
+  "can_remove_from_saved_game": true,
+  "primary_mod_class_name": "PowerThresholdMod.PowerThresholdModEntry"
+}
