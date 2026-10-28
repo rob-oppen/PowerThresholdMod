@@ -1,4 +1,4 @@
-using Label = Mafi.Unity.UiToolkit.Library.Label;
+﻿using Label = Mafi.Unity.UiToolkit.Library.Label;
 using Slider = Mafi.Unity.UiToolkit.Library.Slider;
 using Toggle = Mafi.Unity.UiToolkit.Library.Toggle;
 using System;
@@ -11,10 +11,10 @@ using Mafi.Core.Factory.Machines;
 using Mafi.Core.Prototypes;
 using Mafi.Localization;
 using Mafi.Unity.UiToolkit;
+using Mafi.Unity.UiToolkit.Component;
 using Mafi.Unity.UiToolkit.Library;
 using PowerThresholdMod.Engine;
 using PowerThresholdMod.Model;
-using UnityEngine.UIElements;
 
 namespace PowerThresholdMod.UI
 {
@@ -29,20 +29,38 @@ namespace PowerThresholdMod.UI
         private Label m_lblDemand;
         private Label m_lblReserve;
 
+        public static bool IsWindowOpen => s_instance != null && s_instance.IsOpen;
+
         public static void ToggleWindow(ProtosDb protosDb, PowerGovernorManager manager, UiRoot uiRoot)
+        {
+            if (IsWindowOpen)
+            {
+                CloseWindow();
+            }
+            else
+            {
+                OpenWindow(protosDb, manager, uiRoot);
+            }
+        }
+
+        public static void OpenWindow(ProtosDb protosDb, PowerGovernorManager manager, UiRoot uiRoot)
         {
             if (s_instance == null)
             {
                 s_instance = new PowerGovernorWindow(protosDb, manager);
             }
 
-            if (s_instance.IsOpen)
-            {
-                s_instance.Close();
-            }
-            else
+            if (!s_instance.IsOpen)
             {
                 s_instance.Open(uiRoot);
+            }
+        }
+
+        public static void CloseWindow()
+        {
+            if (s_instance != null && s_instance.IsOpen)
+            {
+                s_instance.Close();
             }
         }
 
@@ -52,8 +70,7 @@ namespace PowerThresholdMod.UI
             m_protosDb = protosDb;
             m_manager = manager;
 
-            WindowWidth(new Px(580));
-            // max height auto
+            WindowWidth(new Px(640));
             MakeMovableAndEnablePositionSaving();
             EnablePinning();
 
@@ -63,31 +80,32 @@ namespace PowerThresholdMod.UI
         private void buildUi()
         {
             // 1. Grid Status Panel
-            var headerPanel = new PanelWithHeader(new LocStrFormatted("Grid Metrics"));
+            var headerPanel = new PanelWithHeader(new LocStrFormatted("Power Grid Status"));
+            headerPanel.Body.PaddingTopBottom(3.pt()).Gap(4.px());
+
             m_lblGridStatus = new Label(new LocStrFormatted("Grid Status: Calculating..."));
             m_lblCapacity = new Label(new LocStrFormatted("Capacity: 0.0 MW"));
             m_lblDemand = new Label(new LocStrFormatted("Demand: 0.0 MW"));
             m_lblReserve = new Label(new LocStrFormatted("Net Headroom: 0.0 MW (0.0%)"));
 
-            var statusRow1 = new Row();
+            var statusRow1 = new Row().AlignItemsCenter().Gap(10.px());
             statusRow1.Add(m_lblGridStatus);
-            headerPanel.Add(statusRow1);
 
-            var statusRow2 = new Row();
-            statusRow2.Add(m_lblCapacity);
-            statusRow2.Add(m_lblDemand);
-            headerPanel.Add(statusRow2);
+            var statusRow2 = new Row().AlignItemsCenter().Gap(16.px());
+            statusRow2.Add(m_lblCapacity, m_lblDemand);
 
-            var statusRow3 = new Row();
+            var statusRow3 = new Row().AlignItemsCenter().Gap(10.px());
             statusRow3.Add(m_lblReserve);
-            headerPanel.Add(statusRow3);
 
+            headerPanel.BodyAdd(statusRow1, statusRow2, statusRow3);
             AddPanel(headerPanel);
 
             // 2. Machine Thresholds Panel
             var rulesPanel = new PanelWithHeader(new LocStrFormatted("Global Machine Thresholds"));
+            rulesPanel.Body.PaddingTopBottom(3.pt()).Gap(4.px());
 
-            // Enumerate all electricity consuming machine prototypes
+            var scroll = new ScrollColumn().MaxHeight(new Px(400)).AlignItemsStretch();
+
             var electricMachineProtos = m_protosDb.Filter<MachineProto>(p => p.ElectricityConsumed.IsPositive)
                 .OrderBy(p => p.Strings.Name.ToString())
                 .ToList();
@@ -97,21 +115,20 @@ namespace PowerThresholdMod.UI
                 var rule = m_manager.GetGlobalRule(proto);
                 string protoName = proto.Strings.Name.ToString();
 
-                var row = new Row();
+                var row = new Row().AlignItemsCenter().Gap(8.px()).PaddingTopBottom(2.px());
+
                 var chkEnabled = new Toggle(rule.IsEnabled);
-                var lblName = new Label(new LocStrFormatted(protoName));
+                var lblName = new Label(new LocStrFormatted(protoName)).MinWidth(new Px(170));
+
+                var btnMode = new ButtonText(new LocStrFormatted(rule.Mode == ThresholdMode.Percentage ? "[ % ]" : "[ MW ]"), null)
+                    .MinWidth(new Px(50));
 
                 var slider = new Slider();
-                slider.Range(0f, 100f);
+                slider.Range(0f, rule.Mode == ThresholdMode.Percentage ? 100f : 50f);
                 slider.Value(rule.ThresholdValue, notify: false);
+                slider.MinWidth(new Px(160));
 
-                var lblValue = new Label(new LocStrFormatted(FormatRuleValue(rule)));
-
-                var btnMode = new ButtonText(new LocStrFormatted(rule.Mode == ThresholdMode.Percentage ? "[ % ]" : "[ MW ]"), () =>
-                {
-                    rule.Mode = (rule.Mode == ThresholdMode.Percentage) ? ThresholdMode.MegaWatts : ThresholdMode.Percentage;
-                    m_manager.SaveSettings();
-                });
+                var lblValue = new Label(new LocStrFormatted(FormatRuleValue(rule))).MinWidth(new Px(75));
 
                 chkEnabled.OnValueChanged(val =>
                 {
@@ -122,22 +139,24 @@ namespace PowerThresholdMod.UI
                 slider.OnValueChanged((val, prev) =>
                 {
                     rule.ThresholdValue = (float)Math.Round(val, 0);
-                    if (lblValue.RootElement is TextElement te)
-                    {
-                        te.text = FormatRuleValue(rule);
-                    }
+                    lblValue.Value(new LocStrFormatted(FormatRuleValue(rule)));
                     m_manager.SaveSettings();
                 });
 
-                row.Add(chkEnabled);
-                row.Add(lblName);
-                row.Add(slider);
-                row.Add(lblValue);
-                row.Add(btnMode);
+                btnMode.OnClick(() =>
+                {
+                    rule.Mode = (rule.Mode == ThresholdMode.Percentage) ? ThresholdMode.MegaWatts : ThresholdMode.Percentage;
+                    slider.Range(0f, rule.Mode == ThresholdMode.Percentage ? 100f : 50f);
+                    btnMode.Value(new LocStrFormatted(rule.Mode == ThresholdMode.Percentage ? "[ % ]" : "[ MW ]"));
+                    lblValue.Value(new LocStrFormatted(FormatRuleValue(rule)));
+                    m_manager.SaveSettings();
+                });
 
-                rulesPanel.Add(row);
+                row.Add(chkEnabled, lblName, btnMode, slider, lblValue);
+                scroll.Add(row);
             }
 
+            rulesPanel.BodyAdd(scroll);
             AddPanel(rulesPanel);
         }
 
@@ -164,24 +183,21 @@ namespace PowerThresholdMod.UI
             float reserve = m_manager.LastReserveMw;
             float pct = m_manager.LastReservePercent;
 
-            if (m_lblCapacity.RootElement is TextElement teCap) teCap.text = $"Capacity: {cap:F1} MW";
-            if (m_lblDemand.RootElement is TextElement teDem) teDem.text = $"Demand: {dem:F1} MW";
-            if (m_lblReserve.RootElement is TextElement teRes) teRes.text = $"Net Reserve: {reserve:F1} MW ({pct:F1}%)";
+            m_lblCapacity.Value(new LocStrFormatted($"Capacity: {cap:F1} MW"));
+            m_lblDemand.Value(new LocStrFormatted($"Demand: {dem:F1} MW"));
+            m_lblReserve.Value(new LocStrFormatted($"Net Reserve: {reserve:F1} MW ({pct:F1}%)"));
 
-            if (m_lblGridStatus.RootElement is TextElement teStat)
+            if (reserve < 0)
             {
-                if (reserve < 0)
-                {
-                    teStat.text = "Grid Status: ⚠ CRITICAL BROWNOUT";
-                }
-                else if (pct < 15f)
-                {
-                    teStat.text = "Grid Status: ⚡ HIGH LOAD (STRAINED)";
-                }
-                else
-                {
-                    teStat.text = "Grid Status: ✔ HEALTHY";
-                }
+                m_lblGridStatus.Value(new LocStrFormatted("Grid Status: ⚠️ CRITICAL BROWNOUT"));
+            }
+            else if (pct < 15f)
+            {
+                m_lblGridStatus.Value(new LocStrFormatted("Grid Status: ⚡ HIGH LOAD (STRAINED)"));
+            }
+            else
+            {
+                m_lblGridStatus.Value(new LocStrFormatted("Grid Status: ✔ HEALTHY"));
             }
         }
     }

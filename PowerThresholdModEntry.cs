@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using HarmonyLib;
 using Mafi;
 using Mafi.Collections;
@@ -9,6 +9,8 @@ using Mafi.Core.Game;
 using Mafi.Core.Mods;
 using Mafi.Core.Prototypes;
 using Mafi.Core.Simulation;
+using Mafi.Unity;
+using Mafi.Unity.Ui.Hud;
 using Mafi.Unity.UiToolkit;
 using PowerThresholdMod.Engine;
 using PowerThresholdMod.UI;
@@ -27,6 +29,7 @@ namespace PowerThresholdMod
         private ProtosDb m_protosDb;
         private UiRoot m_uiRoot;
         private Harmony m_harmony;
+        private GameObject m_hostObj;
 
         public PowerThresholdModEntry(ModManifest manifest)
         {
@@ -54,40 +57,62 @@ namespace PowerThresholdMod
 
             try
             {
-                var electricityManager = resolver.GetResolvedInstance<IElectricityManager>().Value;
-                var entitiesManager = resolver.GetResolvedInstance<EntitiesManager>().Value;
-                var simLoopEvents = resolver.GetResolvedInstance<ISimLoopEvents>().Value;
-                m_uiRoot = resolver.GetResolvedInstance<UiRoot>().Value;
+                var electricityManager = resolver.TryResolve<IElectricityManager>().ValueOrNull
+                    ?? (IElectricityManager)resolver.TryResolve<ElectricityManager>().ValueOrNull;
+
+                var entitiesManager = resolver.TryResolve<EntitiesManager>().ValueOrNull
+                    ?? resolver.TryResolve<IEntitiesManager>().ValueOrNull as EntitiesManager;
+
+                var simLoopEvents = resolver.TryResolve<ISimLoopEvents>().ValueOrNull;
+                m_uiRoot = resolver.TryResolve<UiRoot>().ValueOrNull;
+
+                if (electricityManager == null)
+                {
+                    Log.Error("PowerThresholdMod: IElectricityManager could not be resolved!");
+                    return;
+                }
+                if (entitiesManager == null)
+                {
+                    Log.Error("PowerThresholdMod: EntitiesManager could not be resolved!");
+                    return;
+                }
+
+                HudController hudController = resolver.TryResolve<HudController>().ValueOrNull;
+                IRootEscapeManager escapeManager = resolver.TryResolve<IRootEscapeManager>().ValueOrNull;
 
                 // Instantiate engine
                 m_governorManager = new PowerGovernorManager(electricityManager, entitiesManager);
 
-                // Hook game simulation update loop
-                simLoopEvents.Update.Add(this, m_governorManager.OnSimUpdate);
+                // Hook game simulation update loop for power monitoring and throttling
+                if (simLoopEvents != null)
+                {
+                    simLoopEvents.Update.Add(this, m_governorManager.OnSimUpdate);
+                }
 
                 // Apply Harmony patches for MachineInspector UI integration
                 m_harmony = new Harmony("com.captainofindustry.powerthreshold");
                 MachineInspectorPatch.ApplyPatches(m_harmony);
 
-                // Hook keyboard shortcut (Shift + P) to open the Manager Window
-                simLoopEvents.Update.Add(this, checkKeyboardShortcut);
+                // Attach persistent Unity host for per-frame keyboard updates, HUD button, and Escape key handling
+                m_hostObj = GameObject.Find("PowerGovernorHost");
+                if (m_hostObj == null)
+                {
+                    m_hostObj = new GameObject("PowerGovernorHost");
+                    UnityEngine.Object.DontDestroyOnLoad(m_hostObj);
+                }
+
+                var host = m_hostObj.GetComponent<PowerGovernorHostMb>();
+                if (host == null)
+                {
+                    host = m_hostObj.AddComponent<PowerGovernorHostMb>();
+                }
+                host.Initialize(hudController, m_uiRoot, escapeManager, m_protosDb, m_governorManager);
 
                 Log.Info("PowerThresholdMod: Successfully initialized!");
             }
             catch (Exception ex)
             {
                 Log.Error($"PowerThresholdMod: Initialization error: {ex}");
-            }
-        }
-
-        private void checkKeyboardShortcut()
-        {
-            if ((Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) && Input.GetKeyDown(KeyCode.P))
-            {
-                if (m_protosDb != null && m_governorManager != null && m_uiRoot != null)
-                {
-                    PowerGovernorWindow.ToggleWindow(m_protosDb, m_governorManager, m_uiRoot);
-                }
             }
         }
 
@@ -101,6 +126,10 @@ namespace PowerThresholdMod
             {
                 m_harmony?.UnpatchAll("com.captainofindustry.powerthreshold");
                 m_governorManager?.SaveSettings();
+                if (m_hostObj != null)
+                {
+                    UnityEngine.Object.Destroy(m_hostObj);
+                }
             }
             catch (Exception ex)
             {
