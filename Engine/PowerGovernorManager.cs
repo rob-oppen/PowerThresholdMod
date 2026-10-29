@@ -99,7 +99,7 @@ namespace PowerThresholdMod.Engine
             {
                 return new MachinePowerRule
                 {
-                    IsEnabled = custom.IsEnabled,
+                    IsEnabled = true, // Custom override is always active when HasOverride is true
                     Mode = custom.Mode,
                     PercentThreshold = custom.PercentThreshold,
                     MwThreshold = custom.MwThreshold,
@@ -271,7 +271,7 @@ namespace PowerThresholdMod.Engine
                 custom = new MachineInstanceOverride
                 {
                     HasOverride = false,
-                    IsEnabled = global.IsEnabled,
+                    IsEnabled = true,
                     Mode = global.Mode,
                     PercentThreshold = global.PercentThreshold,
                     MwThreshold = global.MwThreshold,
@@ -567,4 +567,5 @@ namespace PowerThresholdMod.Engine
         public MachinePowerRule EffectiveRule;
     }
 }
+
 

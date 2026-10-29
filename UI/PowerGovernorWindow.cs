@@ -222,16 +222,19 @@ namespace PowerThresholdMod.UI
         {
             var scroll = new ScrollColumn().MaxHeight(new Px(410)).AlignItemsStretch();
 
-            // Filter ALL buildings with electricity consumption (Machines, Data Centers, Research Labs, Sorters, Depots, etc.)
-            var electricProtos = m_protosDb.Filter<LayoutEntityProto>(p => p is IProtoWithPowerConsumption pc && pc.ElectricityConsumed.IsPositive)
-                .OrderBy(p => p.Strings.Name.ToString())
+            // Group buildings by display name to prevent duplicates (e.g. lift height variants)
+            var protoGroups = m_protosDb.Filter<LayoutEntityProto>(p => p is IProtoWithPowerConsumption pc && pc.ElectricityConsumed.IsPositive)
+                .GroupBy(p => p.Strings.Name.ToString())
+                .OrderBy(g => g.Key)
                 .ToList();
 
-            foreach (var proto in electricProtos)
+            foreach (var group in protoGroups)
             {
+                var proto = group.First();
+                string protoName = group.Key;
+                var protoList = group.ToList();
+
                 var rule = m_manager.GetGlobalRule(proto.Id.Value);
-                string protoName = proto.Strings.Name.ToString();
-                string protoId = proto.Id.Value;
 
                 var row = new Row().AlignItemsCenter().Gap(8.px()).PaddingTopBottom(2.px());
 
@@ -270,31 +273,44 @@ namespace PowerThresholdMod.UI
 
                 chkEnabled.OnValueChanged(val =>
                 {
-                    rule.IsEnabled = val;
+                    foreach (var p in protoList)
+                    {
+                        var r = m_manager.GetGlobalRule(p.Id.Value);
+                        r.IsEnabled = val;
+                    }
                     m_manager.SaveSettings();
                 });
 
-                // Updates threshold cleanly without mixing up percentages and megawatts
+                // Updates threshold cleanly across all variants in the group
                 slider.OnValueChanged((prev, current) =>
                 {
-                    rule.ThresholdValue = (float)Math.Round(current, 0);
+                    float rounded = (float)Math.Round(current, 0);
+                    foreach (var p in protoList)
+                    {
+                        var r = m_manager.GetGlobalRule(p.Id.Value);
+                        r.ThresholdValue = rounded;
+                    }
                     lblValue.Value(new LocStrFormatted(FormatRuleValue(rule)));
                     m_manager.SaveSettings();
                 });
 
                 btnMode.OnClick(() =>
                 {
-                    // Toggle mode cleanly
-                    rule.Mode = (rule.Mode == ThresholdMode.Percentage) ? ThresholdMode.MegaWatts : ThresholdMode.Percentage;
+                    var newMode = (rule.Mode == ThresholdMode.Percentage) ? ThresholdMode.MegaWatts : ThresholdMode.Percentage;
+                    foreach (var p in protoList)
+                    {
+                        var r = m_manager.GetGlobalRule(p.Id.Value);
+                        r.Mode = newMode;
+                    }
 
-                    float newMax = (rule.Mode == ThresholdMode.Percentage)
+                    float newMax = (newMode == ThresholdMode.Percentage)
                         ? 100f
                         : Math.Max(100f, (float)Math.Ceiling(m_manager.LastCapacityMw / 50f) * 50f);
 
                     slider.Range(0f, newMax);
                     slider.Value(rule.ThresholdValue, notify: false);
 
-                    btnMode.Value(new LocStrFormatted(rule.Mode == ThresholdMode.Percentage ? "[ % ]" : "[ MW ]"));
+                    btnMode.Value(new LocStrFormatted(newMode == ThresholdMode.Percentage ? "[ % ]" : "[ MW ]"));
                     lblValue.Value(new LocStrFormatted(FormatRuleValue(rule)));
                     m_manager.SaveSettings();
                 });
@@ -302,13 +318,14 @@ namespace PowerThresholdMod.UI
                 // Row refresh hook to update throttled counts and unpause indicators
                 m_rowRefreshActions.Add(() =>
                 {
-                    if (m_manager.IsProtoBeingTested(protoId))
+                    bool isTesting = protoList.Any(p => m_manager.IsProtoBeingTested(p.Id.Value));
+                    if (isTesting)
                     {
                         lblStatus.Value(new LocStrFormatted("🔄 Testing unpause..."));
                     }
                     else
                     {
-                        int pausedCount = m_manager.GetThrottledCountForProto(protoId);
+                        int pausedCount = protoList.Sum(p => m_manager.GetThrottledCountForProto(p.Id.Value));
                         if (pausedCount > 0)
                         {
                             lblStatus.Value(new LocStrFormatted($"⏸ {pausedCount} off"));
@@ -403,12 +420,12 @@ namespace PowerThresholdMod.UI
                 return;
             }
 
-            var groups = pausedList.GroupBy(b => b.ProtoId).OrderBy(g => g.First().Name);
+            var groups = pausedList.GroupBy(b => b.Name).OrderBy(g => g.Key);
 
             foreach (var group in groups)
             {
                 var first = group.First();
-                string protoId = group.Key;
+                string groupName = group.Key;
                 int groupCount = group.Count();
 
                 var groupCard = new Column()
@@ -433,7 +450,10 @@ namespace PowerThresholdMod.UI
 
                 btnResumeType.OnClick(() =>
                 {
-                    m_manager.ResumeAllOfProto(protoId);
+                    foreach (var item in group)
+                    {
+                        m_manager.ResumeSingleBuilding(item.Entity.Id.Value);
+                    }
                     RefreshStatusIfOpen();
                 });
 
@@ -689,4 +709,5 @@ namespace PowerThresholdMod.UI
         }
     }
 }
+
 

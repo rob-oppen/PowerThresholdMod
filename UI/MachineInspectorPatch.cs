@@ -82,6 +82,7 @@ namespace PowerThresholdMod.UI
                     if (machine == null || PowerGovernorManager.Instance == null) return;
                     var custom = PowerGovernorManager.Instance.GetOrCreateInstanceOverride(machine);
                     custom.HasOverride = val;
+                    custom.IsEnabled = val;
                     PowerGovernorManager.Instance.SetInstanceOverride(machine, custom);
                     refreshMachineControls(machine, chkOverride, slider, lblVal, btnMode, lblStatus);
                 });
@@ -93,8 +94,10 @@ namespace PowerThresholdMod.UI
                     if (machine == null || PowerGovernorManager.Instance == null) return;
                     var custom = PowerGovernorManager.Instance.GetOrCreateInstanceOverride(machine);
                     custom.ThresholdValue = (float)Math.Round(current, 0);
+                    custom.IsEnabled = true;
                     PowerGovernorManager.Instance.SetInstanceOverride(machine, custom);
                     lblVal.Value(new LocStrFormatted(FormatRuleValue(custom)));
+                    updateStatusText(machine, lblStatus);
                 });
 
                 btnMode.OnClick(() =>
@@ -103,6 +106,7 @@ namespace PowerThresholdMod.UI
                     if (machine == null || PowerGovernorManager.Instance == null) return;
                     var custom = PowerGovernorManager.Instance.GetOrCreateInstanceOverride(machine);
                     custom.Mode = (custom.Mode == ThresholdMode.Percentage) ? ThresholdMode.MegaWatts : ThresholdMode.Percentage;
+                    custom.IsEnabled = true;
                     float maxRange = custom.Mode == ThresholdMode.Percentage
                         ? 100f
                         : Math.Max(100f, PowerGovernorManager.Instance.LastCapacityMw);
@@ -111,6 +115,7 @@ namespace PowerThresholdMod.UI
                     btnMode.Value(new LocStrFormatted(custom.Mode == ThresholdMode.Percentage ? "[ % ]" : "[ MW ]"));
                     lblVal.Value(new LocStrFormatted(FormatRuleValue(custom)));
                     PowerGovernorManager.Instance.SetInstanceOverride(machine, custom);
+                    updateStatusText(machine, lblStatus);
                 });
 
                 // Observe machine changes when player clicks machines
@@ -210,3 +215,4 @@ namespace PowerThresholdMod.UI
         }
     }
 }
+
