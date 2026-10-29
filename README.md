@@ -69,8 +69,15 @@ dotnet build -c Release
 ```
 This automatically compiles against `.NET Framework 4.8` / COI game assemblies and deploys directly to your `%APPDATA%\Captain of Industry\Mods\PowerThresholdMod` folder.
 
----
+## License & Legal Notices
 
-## License & Credits
+### Mod License
+This mod is licensed under the **Captain of Industry Open License (COI-Open)**. See [LICENSE](file:///x:/coding/Personal/PowerThresholdMod/LICENSE) for full terms.
+
+### Captain of Industry Modding Policy Notice
+> *This Mod includes short excerpts or references to Captain of Industry Game Code. Any such Game Code is © MaFi Games and is used only under the Captain of Industry Modding Policy.*
+
 - **Author:** rob-oppen
 - Developed for **Captain of Industry** (v0.8.0+).
+- Modding Policy: [https://coigame.com/Legal/Modding-Policy](https://coigame.com/Legal/Modding-Policy)
+
