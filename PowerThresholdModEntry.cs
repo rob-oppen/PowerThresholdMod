@@ -1,4 +1,6 @@
-﻿using System;
+﻿using Mafi.Unity.Camera;
+using Mafi.Unity.Ui;
+using System;
 using HarmonyLib;
 using Mafi;
 using Mafi.Collections;
@@ -80,6 +82,8 @@ namespace PowerThresholdMod
 
                 HudController hudController = resolver.TryResolve<HudController>().ValueOrNull;
                 IRootEscapeManager escapeManager = resolver.TryResolve<IRootEscapeManager>().ValueOrNull;
+                InspectorsManager inspectorsManager = resolver.TryResolve<InspectorsManager>().ValueOrNull;
+                CameraController cameraController = resolver.TryResolve<CameraController>().ValueOrNull;
 
                 // Instantiate engine
                 m_governorManager = new PowerGovernorManager(electricityManager, entitiesManager);
@@ -108,7 +112,7 @@ namespace PowerThresholdMod
                 {
                     host = m_hostObj.AddComponent<PowerGovernorHostMb>();
                 }
-                host.Initialize(hudController, m_uiRoot, escapeManager, m_protosDb, m_governorManager);
+                host.Initialize(hudController, m_uiRoot, escapeManager, m_protosDb, m_governorManager, inspectorsManager, cameraController);
 
                 Log.Info("PowerThresholdMod: Successfully initialized!");
             }
@@ -149,3 +153,4 @@ namespace PowerThresholdMod
         }
     }
 }
+

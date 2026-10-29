@@ -44,6 +44,7 @@ namespace PowerThresholdMod.Engine
         private int m_testExpiresAtStep;
 
         public int ThrottledCount => m_throttledByMod.Count;
+        public IReadOnlyCollection<int> ThrottledEntityIds => m_throttledByMod;
         public int LastTestedMachineId => m_lastTestedMachineId;
         public string LastTestedMachineName { get; private set; } = "";
         public string LastTestedProtoId { get; private set; } = "";
@@ -166,6 +167,54 @@ namespace PowerThresholdMod.Engine
             m_testExpiresAtStep = 0;
             m_stableStepCounter = 0;
             Log.Info("PowerGovernor: Manually resumed all throttled entities.");
+        }
+
+        public void ResumeSingleBuilding(int entityId)
+        {
+            if (m_entitiesManager == null) return;
+
+            if (m_throttledByMod.Remove(entityId))
+            {
+                var entityOpt = m_entitiesManager.GetEntity<LayoutEntity>(new EntityId(entityId));
+                if (entityOpt.HasValue)
+                {
+                    entityOpt.Value.SetPaused(false);
+                    string protoId = entityOpt.Value.Prototype.Id.Value;
+                    if (m_throttledCountsByProto.TryGetValue(protoId, out int cnt) && cnt > 0)
+                    {
+                        m_throttledCountsByProto[protoId] = cnt - 1;
+                    }
+                    Log.Info($"PowerGovernor: Manually resumed single building #{entityId}.");
+                }
+            }
+        }
+
+        public List<ThrottledBuildingInfo> GetThrottledBuildings()
+        {
+            var list = new List<ThrottledBuildingInfo>();
+            if (m_entitiesManager == null) return list;
+
+            foreach (int id in m_throttledByMod)
+            {
+                var entityOpt = m_entitiesManager.GetEntity<LayoutEntity>(new EntityId(id));
+                if (!entityOpt.HasValue) continue;
+
+                var entity = entityOpt.Value;
+                bool isLocal = InstanceOverrides.TryGetValue(id, out var custom) && custom.HasOverride;
+                var rule = GetEffectiveRule(entity);
+
+                list.Add(new ThrottledBuildingInfo
+                {
+                    Entity = entity,
+                    Name = entity.Prototype.Strings.Name.ToString(),
+                    ProtoId = entity.Prototype.Id.Value,
+                    Proto = entity.Prototype,
+                    IsLocalOverride = isLocal,
+                    EffectiveRule = rule
+                });
+            }
+
+            return list.OrderBy(b => b.Name).ThenBy(b => b.Entity.Id.Value).ToList();
         }
 
         public void SetInstanceOverride(LayoutEntity entity, MachineInstanceOverride overrideRule)
@@ -479,5 +528,14 @@ namespace PowerThresholdMod.Engine
                 Log.Warning($"PowerGovernor: Failed to load settings: {ex.Message}");
             }
         }
+    }
+    public struct ThrottledBuildingInfo
+    {
+        public LayoutEntity Entity;
+        public string Name;
+        public string ProtoId;
+        public LayoutEntityProto Proto;
+        public bool IsLocalOverride;
+        public MachinePowerRule EffectiveRule;
     }
 }

@@ -14,6 +14,8 @@ using Mafi.Core.Prototypes;
 using Mafi.Core.Syncers;
 using Mafi.Localization;
 using Mafi.Unity;
+using Mafi.Unity.Camera;
+using Mafi.Unity.Ui;
 using Mafi.Unity.UiToolkit;
 using Mafi.Unity.UiToolkit.Component;
 using Mafi.Unity.UiToolkit.Library;
@@ -28,6 +30,8 @@ namespace PowerThresholdMod.UI
 
         private readonly ProtosDb m_protosDb;
         private readonly PowerGovernorManager m_manager;
+        private readonly InspectorsManager m_inspectorsManager;
+        private readonly CameraController m_cameraController;
 
         private Label m_lblGridStatus;
         private ButtonText m_btnResumeAll;
@@ -37,15 +41,21 @@ namespace PowerThresholdMod.UI
         private Label m_lblDemand;
         private Label m_lblConsumed;
 
+        // Paused Buildings Tab UI components
+        private Column m_pausedRowsContainer;
+        private Label m_lblPausedSummary;
+        private ButtonText m_btnResumeAllInTab;
+        private int m_lastRenderedPausedHash = -1;
+
         private readonly List<Action> m_rowRefreshActions = new List<Action>();
 
         public static bool IsWindowOpen => s_instance != null && s_instance.IsOpen;
 
-        public static void ToggleWindow(ProtosDb protosDb, PowerGovernorManager manager, UiRoot uiRoot)
+        public static void ToggleWindow(ProtosDb protosDb, PowerGovernorManager manager, UiRoot uiRoot, InspectorsManager inspectorsManager = null, CameraController cameraController = null)
         {
             if (s_instance == null)
             {
-                s_instance = new PowerGovernorWindow(protosDb, manager);
+                s_instance = new PowerGovernorWindow(protosDb, manager, inspectorsManager, cameraController);
             }
 
             if (s_instance.IsOpen)
@@ -59,11 +69,11 @@ namespace PowerThresholdMod.UI
             }
         }
 
-        public static void OpenWindow(ProtosDb protosDb, PowerGovernorManager manager, UiRoot uiRoot)
+        public static void OpenWindow(ProtosDb protosDb, PowerGovernorManager manager, UiRoot uiRoot, InspectorsManager inspectorsManager = null, CameraController cameraController = null)
         {
             if (s_instance == null)
             {
-                s_instance = new PowerGovernorWindow(protosDb, manager);
+                s_instance = new PowerGovernorWindow(protosDb, manager, inspectorsManager, cameraController);
             }
 
             if (!s_instance.IsOpen)
@@ -105,14 +115,18 @@ namespace PowerThresholdMod.UI
                 {
                     action();
                 }
+
+                s_instance.refreshPausedTab();
             }
         }
 
-        public PowerGovernorWindow(ProtosDb protosDb, PowerGovernorManager manager)
+        public PowerGovernorWindow(ProtosDb protosDb, PowerGovernorManager manager, InspectorsManager inspectorsManager = null, CameraController cameraController = null)
             : base(new LocStrFormatted("⚡ Electric Power Governor"), addFullscreenButton: false)
         {
             m_protosDb = protosDb;
             m_manager = manager;
+            m_inspectorsManager = inspectorsManager;
+            m_cameraController = cameraController;
 
             // Comfortable dimensions for electrical building list, tabs, icons, and guide
             WindowSize(800.px(), 690.px());
@@ -179,14 +193,16 @@ namespace PowerThresholdMod.UI
                 RefreshStatusIfOpen();
             });
 
-            // 2. Tabbed Section: Building Rules & User Guide
+            // 2. Tabbed Section: Building Rules, Paused Buildings, and User Guide
             var tabContainer = new TabContainer();
             tabContainer.Height(new Px(450));
 
             var rulesContent = buildRulesTab();
+            var pausedContent = buildPausedBuildingsTab();
             var guideContent = buildGuideTab();
 
             tabContainer.AddTab(new LocStrFormatted("⚡ Building Rules"), rulesContent, scroll: false);
+            tabContainer.AddTab(new LocStrFormatted("⏸ Paused Buildings"), pausedContent, scroll: false);
             tabContainer.AddTab(new LocStrFormatted("📖 Guide & Help"), guideContent, scroll: false);
 
             Body.Add(tabContainer);
@@ -309,6 +325,166 @@ namespace PowerThresholdMod.UI
             }
 
             return scroll;
+        }
+
+        private UiComponent buildPausedBuildingsTab()
+        {
+            var scroll = new ScrollColumn().MaxHeight(new Px(410)).AlignItemsStretch();
+            var col = new Column().Padding(8.px()).Gap(8.px());
+
+            // Summary Header Card
+            var headerCard = createCard();
+            var topRow = new Row().AlignItemsCenter().Gap(10.px());
+            topRow.Add(new Icon(Assets.Unity.UserInterface.Toolbar.PauseTool_svg).Size(20.px(), 20.px()));
+
+            m_lblPausedSummary = new Label(new LocStrFormatted("Currently Paused: 0 Buildings")).FontBold().MinWidth(new Px(380));
+            m_btnResumeAllInTab = new ButtonText(new LocStrFormatted("Resume All"), null).MinWidth(new Px(140));
+            m_btnResumeAllInTab.OnClick(() =>
+            {
+                m_manager.ResumeAllThrottled();
+                RefreshStatusIfOpen();
+            });
+
+            topRow.Add(m_lblPausedSummary, m_btnResumeAllInTab);
+
+            var lblDesc = new Label(new LocStrFormatted(
+                "Buildings automatically paused by the governor to prevent brownouts. Click 'View' to focus the camera on any building."
+            ));
+
+            headerCard.Add(topRow, lblDesc);
+
+            // Container for dynamic paused rows
+            m_pausedRowsContainer = new Column().Gap(4.px());
+
+            col.Add(headerCard, m_pausedRowsContainer);
+            scroll.Add(col);
+
+            renderPausedBuildingsRows();
+
+            return scroll;
+        }
+
+        private void renderPausedBuildingsRows()
+        {
+            if (m_pausedRowsContainer == null) return;
+            m_pausedRowsContainer.Clear();
+
+            var pausedList = m_manager.GetThrottledBuildings();
+            int count = pausedList.Count;
+
+            if (m_lblPausedSummary != null)
+            {
+                m_lblPausedSummary.Value(new LocStrFormatted(
+                    count == 0 ? "Currently Paused: 0 Buildings (Grid Stable)" : $"Currently Paused: {count} Building{(count > 1 ? "s" : "")}"
+                ));
+            }
+
+            if (m_btnResumeAllInTab != null)
+            {
+                m_btnResumeAllInTab.Visible(count > 0);
+            }
+
+            if (count == 0)
+            {
+                // Empty State Card
+                var emptyCard = createCard();
+                var emptyRow = new Row().AlignItemsCenter().Gap(10.px()).Padding(10.px());
+                emptyRow.Add(new Icon(Assets.Unity.UserInterface.General.Checkmark_v2_svg).Size(28.px(), 28.px()));
+
+                var emptyTextCol = new Column().Gap(4.px());
+                emptyTextCol.Add(new Label(new LocStrFormatted("All Configured Buildings Are Running")).FontBold().Color(ColorRgba.Green));
+                emptyTextCol.Add(new Label(new LocStrFormatted(
+                    "No buildings are currently throttled by the Power Governor. When power production drops below your configured thresholds, paused buildings will appear here along with their rule source (Global or Local)."
+                )));
+
+                emptyRow.Add(emptyTextCol);
+                emptyCard.Add(emptyRow);
+                m_pausedRowsContainer.Add(emptyCard);
+                return;
+            }
+
+            foreach (var item in pausedList)
+            {
+                var rowCard = new Column()
+                    .Padding(5.px(), 8.px())
+                    .Gap(2.px())
+                    .Background(new ColorRgba(20, 26, 36, 210))
+                    .Border(1.px(), color: new ColorRgba(50, 65, 85, 140), radius: 4);
+
+                var row = new Row().AlignItemsCenter().Gap(8.px());
+
+                // Building Icon
+                UiComponent iconComp = (item.Proto is IProtoWithIcon pwi)
+                    ? new Icon(pwi).Size(22.px(), 22.px())
+                    : new Icon(Assets.Unity.UserInterface.Toolbar.Machines_svg).Size(22.px(), 22.px());
+
+                // Building Name & Entity ID
+                var lblName = new Label(new LocStrFormatted($"{item.Name} (#{item.Entity.Id.Value})"))
+                    .MinWidth(new Px(190))
+                    .FontBold();
+
+                // Rule Source Badge (Global vs Local)
+                string ruleValStr = FormatRuleValue(item.EffectiveRule);
+                UiComponent badgeComp;
+                if (item.IsLocalOverride)
+                {
+                    badgeComp = new Label(new LocStrFormatted($"[ Local Override: {ruleValStr} ]"))
+                        .Color(ColorRgba.Cyan)
+                        .MinWidth(new Px(240));
+                }
+                else
+                {
+                    badgeComp = new Label(new LocStrFormatted($"[ Global Rule: {ruleValStr} ]"))
+                        .Color(ColorRgba.LightBlue)
+                        .MinWidth(new Px(240));
+                }
+
+                // Action: View button (pans camera and opens inspector)
+                var btnFocus = new ButtonText(new LocStrFormatted("View"), null).MinWidth(new Px(65));
+                var entityRef = item.Entity;
+                btnFocus.OnClick(() =>
+                {
+                    if (entityRef != null)
+                    {
+                        m_cameraController?.PanTo(entityRef.Position2f);
+                        m_inspectorsManager?.TryActivateFor(entityRef);
+                    }
+                });
+
+                // Action: Resume button for single building
+                int entityId = item.Entity.Id.Value;
+                var btnResume = new ButtonText(new LocStrFormatted("Resume"), null).MinWidth(new Px(75));
+                btnResume.OnClick(() =>
+                {
+                    m_manager.ResumeSingleBuilding(entityId);
+                    RefreshStatusIfOpen();
+                });
+
+                row.Add(iconComp, lblName, badgeComp, btnFocus, btnResume);
+                rowCard.Add(row);
+                m_pausedRowsContainer.Add(rowCard);
+            }
+        }
+
+        private void refreshPausedTab()
+        {
+            if (m_pausedRowsContainer == null) return;
+
+            // Hash currently throttled IDs to avoid rebuilding unless changed
+            int hash = 17;
+            unchecked
+            {
+                foreach (int id in m_manager.ThrottledEntityIds)
+                {
+                    hash = hash * 31 + id;
+                }
+            }
+
+            if (hash != m_lastRenderedPausedHash)
+            {
+                m_lastRenderedPausedHash = hash;
+                renderPausedBuildingsRows();
+            }
         }
 
         private UiComponent buildGuideTab()
@@ -487,5 +663,3 @@ namespace PowerThresholdMod.UI
         }
     }
 }
-
-

@@ -1,4 +1,6 @@
-﻿using System;
+﻿using Mafi.Unity.Camera;
+using Mafi.Unity.Ui;
+using System;
 using System.Collections;
 using System.Reflection;
 using Mafi;
@@ -20,6 +22,8 @@ namespace PowerThresholdMod.UI
         private IRootEscapeManager m_escapeManager;
         private ProtosDb m_protosDb;
         private PowerGovernorManager m_governorManager;
+        private InspectorsManager m_inspectorsManager;
+        private CameraController m_cameraController;
 
         private bool m_buttonAdded;
         private bool m_initialized;
@@ -27,13 +31,15 @@ namespace PowerThresholdMod.UI
         private int m_openFrame;
         private int m_frameCounter;
 
-        public void Initialize(HudController hudController, UiRoot uiRoot, IRootEscapeManager escapeManager, ProtosDb protosDb, PowerGovernorManager governorManager)
+        public void Initialize(HudController hudController, UiRoot uiRoot, IRootEscapeManager escapeManager, ProtosDb protosDb, PowerGovernorManager governorManager, InspectorsManager inspectorsManager = null, CameraController cameraController = null)
         {
             m_hudController = hudController;
             m_uiRoot = uiRoot;
             m_escapeManager = escapeManager;
             m_protosDb = protosDb;
             m_governorManager = governorManager;
+            m_inspectorsManager = inspectorsManager;
+            m_cameraController = cameraController;
 
             if (!m_initialized)
             {
@@ -131,7 +137,7 @@ namespace PowerThresholdMod.UI
             }
             else
             {
-                PowerGovernorWindow.OpenWindow(m_protosDb, m_governorManager, m_uiRoot);
+                PowerGovernorWindow.OpenWindow(m_protosDb, m_governorManager, m_uiRoot, m_inspectorsManager, m_cameraController);
                 m_openFrame = Time.frameCount;
                 if (!m_escapeRegistered && m_escapeManager != null)
                 {
@@ -179,7 +185,7 @@ namespace PowerThresholdMod.UI
                     {
                         Func<UiComponent> buildTab = () =>
                         {
-                            var win = new PowerGovernorWindow(m_protosDb, m_governorManager);
+                            var win = new PowerGovernorWindow(m_protosDb, m_governorManager, m_inspectorsManager, m_cameraController);
                             return win;
                         };
 
@@ -203,3 +209,4 @@ namespace PowerThresholdMod.UI
         }
     }
 }
+
