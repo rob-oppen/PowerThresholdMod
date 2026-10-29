@@ -572,8 +572,8 @@ namespace PowerThresholdMod.UI
             var tierAlwaysOn = createTierBox(
                 iconPath: Assets.Unity.UserInterface.General.Checkmark_v2_svg,
                 title: "ALWAYS ON (CRITICAL - DO NOT PAUSE)",
-                buildings: "Storage, Balancers, Electric Boilers, Maintenance I & II Depots, Water Pumps, Fuel Refineries",
-                desc: "• Why: If maintenance depots or water/fuel pumps lose power, machines break down and boilers starve, triggering an unrecoverable blackout death spiral.\n• Action: Leave the checkbox UNCHECKED for these so they always receive full power.",
+                buildings: "Storage, Balancers, Electric Boilers, Maintenance I & II Depots, Water Pumps, Fuel Refineries, Sorting Plants, Lifts, Sorters",
+                desc: "• Why: If maintenance depots, water/fuel pumps, or resource sorting/logistics lose power, machines break down and boilers starve, triggering an unrecoverable blackout death spiral.\n• Action: Leave the checkbox UNCHECKED for these so they always receive full power.",
                 titleColor: ColorRgba.Green
             );
 
@@ -596,7 +596,7 @@ namespace PowerThresholdMod.UI
             var tier3 = createTierBox(
                 iconPath: Assets.Unity.UserInterface.Toolbar.Research_svg,
                 title: "TIER III - HEAVY CONSUMERS (FIRST TO PAUSE - e.g. 60% - 80% High Threshold)",
-                buildings: "Arc Furnaces, Data Centres / Mainframes (Computing), Research Labs, Sorting Plants, Lifts, Sorters",
+                buildings: "Arc Furnaces, Data Centres / Mainframes (Computing), Research Labs",
                 desc: "• Why: Arc Furnaces draw enormous electricity (1.5MW - 3MW each!), and Computing/Research can easily pause without harming factory survival.\n• Action: Set a high threshold (e.g. 65% - 75%) so they are the FIRST to pause, instantly stabilizing the grid.",
                 titleColor: ColorRgba.Orange
             );
@@ -709,5 +709,6 @@ namespace PowerThresholdMod.UI
         }
     }
 }
+
 
 
