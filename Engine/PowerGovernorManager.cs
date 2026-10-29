@@ -189,6 +189,34 @@ namespace PowerThresholdMod.Engine
             }
         }
 
+        public void ResumeAllOfProto(string protoId)
+        {
+            if (m_entitiesManager == null) return;
+
+            var toRemove = new List<int>();
+            foreach (int id in m_throttledByMod)
+            {
+                var entityOpt = m_entitiesManager.GetEntity<LayoutEntity>(new EntityId(id));
+                if (entityOpt.HasValue && entityOpt.Value.Prototype.Id.Value == protoId)
+                {
+                    toRemove.Add(id);
+                }
+            }
+
+            foreach (int id in toRemove)
+            {
+                m_throttledByMod.Remove(id);
+                var entityOpt = m_entitiesManager.GetEntity<LayoutEntity>(new EntityId(id));
+                if (entityOpt.HasValue)
+                {
+                    entityOpt.Value.SetPaused(false);
+                }
+            }
+
+            m_throttledCountsByProto.Remove(protoId);
+            Log.Info($"PowerGovernor: Manually resumed all ({toRemove.Count}) paused buildings of prototype '{protoId}'.");
+        }
+
         public List<ThrottledBuildingInfo> GetThrottledBuildings()
         {
             var list = new List<ThrottledBuildingInfo>();
@@ -539,3 +567,4 @@ namespace PowerThresholdMod.Engine
         public MachinePowerRule EffectiveRule;
     }
 }
+

@@ -403,66 +403,92 @@ namespace PowerThresholdMod.UI
                 return;
             }
 
-            foreach (var item in pausedList)
+            var groups = pausedList.GroupBy(b => b.ProtoId).OrderBy(g => g.First().Name);
+
+            foreach (var group in groups)
             {
-                var rowCard = new Column()
-                    .Padding(5.px(), 8.px())
-                    .Gap(2.px())
-                    .Background(new ColorRgba(20, 26, 36, 210))
-                    .Border(1.px(), color: new ColorRgba(50, 65, 85, 140), radius: 4);
+                var first = group.First();
+                string protoId = group.Key;
+                int groupCount = group.Count();
 
-                var row = new Row().AlignItemsCenter().Gap(8.px());
+                var groupCard = new Column()
+                    .Padding(8.px(), 10.px())
+                    .Gap(6.px())
+                    .Background(new ColorRgba(20, 26, 36, 215))
+                    .Border(1.px(), color: new ColorRgba(50, 65, 85, 150), radius: 6);
 
-                // Building Icon
-                UiComponent iconComp = (item.Proto is IProtoWithIcon pwi)
-                    ? new Icon(pwi).Size(22.px(), 22.px())
-                    : new Icon(Assets.Unity.UserInterface.Toolbar.Machines_svg).Size(22.px(), 22.px());
+                // Group Header Row
+                var headerRow = new Row().AlignItemsCenter().Gap(8.px());
 
-                // Building Name & Entity ID
-                var lblName = new Label(new LocStrFormatted($"{item.Name} (#{item.Entity.Id.Value})"))
-                    .MinWidth(new Px(190))
-                    .FontBold();
+                UiComponent iconComp = (first.Proto is IProtoWithIcon pwi)
+                    ? new Icon(pwi).Size(24.px(), 24.px())
+                    : new Icon(Assets.Unity.UserInterface.Toolbar.Machines_svg).Size(24.px(), 24.px());
 
-                // Rule Source Badge (Global vs Local)
-                string ruleValStr = FormatRuleValue(item.EffectiveRule);
-                UiComponent badgeComp;
-                if (item.IsLocalOverride)
+                var lblTitle = new Label(new LocStrFormatted($"{first.Name} ({groupCount} paused)"))
+                    .FontBold()
+                    .MinWidth(new Px(240));
+
+                var btnResumeType = new ButtonText(new LocStrFormatted($"Resume All ({groupCount})"), null)
+                    .MinWidth(new Px(130));
+
+                btnResumeType.OnClick(() =>
                 {
-                    badgeComp = new Label(new LocStrFormatted($"[ Local Override: {ruleValStr} ]"))
-                        .Color(ColorRgba.Cyan)
-                        .MinWidth(new Px(240));
-                }
-                else
-                {
-                    badgeComp = new Label(new LocStrFormatted($"[ Global Rule: {ruleValStr} ]"))
-                        .Color(ColorRgba.LightBlue)
-                        .MinWidth(new Px(240));
-                }
-
-                // Action: View button (pans camera and opens inspector)
-                var btnFocus = new ButtonText(new LocStrFormatted("View"), null).MinWidth(new Px(65));
-                var entityRef = item.Entity;
-                btnFocus.OnClick(() =>
-                {
-                    if (entityRef != null)
-                    {
-                        m_cameraController?.PanTo(entityRef.Position2f);
-                        m_inspectorsManager?.TryActivateFor(entityRef);
-                    }
-                });
-
-                // Action: Resume button for single building
-                int entityId = item.Entity.Id.Value;
-                var btnResume = new ButtonText(new LocStrFormatted("Resume"), null).MinWidth(new Px(75));
-                btnResume.OnClick(() =>
-                {
-                    m_manager.ResumeSingleBuilding(entityId);
+                    m_manager.ResumeAllOfProto(protoId);
                     RefreshStatusIfOpen();
                 });
 
-                row.Add(iconComp, lblName, badgeComp, btnFocus, btnResume);
-                rowCard.Add(row);
-                m_pausedRowsContainer.Add(rowCard);
+                headerRow.Add(iconComp, lblTitle, btnResumeType);
+                groupCard.Add(headerRow);
+
+                // Individual instances list under this building type
+                var instancesCol = new Column().PaddingLeft(16.px()).Gap(4.px());
+                foreach (var item in group)
+                {
+                    var row = new Row().AlignItemsCenter().Gap(8.px()).PaddingTopBottom(2.px());
+
+                    var lblId = new Label(new LocStrFormatted($"• #{item.Entity.Id.Value}"))
+                        .MinWidth(new Px(80));
+
+                    string ruleValStr = FormatRuleValue(item.EffectiveRule);
+                    UiComponent badgeComp;
+                    if (item.IsLocalOverride)
+                    {
+                        badgeComp = new Label(new LocStrFormatted($"[ Local Override: {ruleValStr} ]"))
+                            .Color(ColorRgba.Cyan)
+                            .MinWidth(new Px(250));
+                    }
+                    else
+                    {
+                        badgeComp = new Label(new LocStrFormatted($"[ Global Rule: {ruleValStr} ]"))
+                            .Color(ColorRgba.LightBlue)
+                            .MinWidth(new Px(250));
+                    }
+
+                    var btnFocus = new ButtonText(new LocStrFormatted("View"), null).MinWidth(new Px(60));
+                    var entityRef = item.Entity;
+                    btnFocus.OnClick(() =>
+                    {
+                        if (entityRef != null)
+                        {
+                            m_cameraController?.PanTo(entityRef.Position2f);
+                            m_inspectorsManager?.TryActivateFor(entityRef);
+                        }
+                    });
+
+                    int entityId = item.Entity.Id.Value;
+                    var btnResumeSingle = new ButtonText(new LocStrFormatted("Resume"), null).MinWidth(new Px(70));
+                    btnResumeSingle.OnClick(() =>
+                    {
+                        m_manager.ResumeSingleBuilding(entityId);
+                        RefreshStatusIfOpen();
+                    });
+
+                    row.Add(lblId, badgeComp, btnFocus, btnResumeSingle);
+                    instancesCol.Add(row);
+                }
+
+                groupCard.Add(instancesCol);
+                m_pausedRowsContainer.Add(groupCard);
             }
         }
 
@@ -663,3 +689,4 @@ namespace PowerThresholdMod.UI
         }
     }
 }
+
