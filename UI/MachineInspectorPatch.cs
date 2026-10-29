@@ -55,18 +55,22 @@ namespace PowerThresholdMod.UI
                 panel.Body.PaddingTopBottom(2.pt()).Gap(4.px());
 
                 var rowOverride = new Row().AlignItemsCenter().Gap(6.px());
-                var chkOverride = new Toggle(false);
+                var chkOverride = new Toggle(standalone: true);
+                chkOverride[1].Visible(false);
+                chkOverride.Width(22.px()).NoShrink();
                 var lblOverride = new Label(new LocStrFormatted("Override Global Threshold"));
                 rowOverride.Add(chkOverride, lblOverride);
 
                 var rowSlider = new Row().AlignItemsCenter().Gap(6.px());
+                var btnMode = new ButtonText(new LocStrFormatted("[ % ]"), null).Width(55.px()).NoShrink();
                 var slider = new Slider();
-                slider.Range(0f, 100f);
-                slider.MinWidth(new Px(140));
                 slider.ValueFormatter(Option.Some<Func<Percent, LocStrFormatted>>(p => LocStrFormatted.Empty));
+                slider[2].Visible(false);
+                slider[2].Width(0.px());
+                slider.Range(0f, 100f);
+                slider.Width(130.px()).NoShrink();
 
-                var lblVal = new Label(new LocStrFormatted("Pause if < 20%")).MinWidth(new Px(115));
-                var btnMode = new ButtonText(new LocStrFormatted("[ % ]"), null).MinWidth(new Px(65));
+                var lblVal = new Label(new LocStrFormatted("Pause if < 20%")).Width(115.px()).NoShrink();
                 rowSlider.Add(btnMode, slider, lblVal);
 
                 var lblStatus = new Label(new LocStrFormatted("Status: Inheriting Global"));

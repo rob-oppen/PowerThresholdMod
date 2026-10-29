@@ -1,61 +1,76 @@
 # Power Threshold Governor (Captain of Industry Mod)
 
-A gameplay automation mod for **Captain of Industry** that allows players to set electricity headroom thresholds—either as a **percentage of total production** or as an **absolute Megawatt (MW) headroom reserve**—before machines will unpause/activate or automatically throttle to prevent island brownouts.
+![Power Threshold Governor Thumbnail](thumbnail.png)
+
+An intelligent electrical load-shedding and power management system for **Captain of Industry**. Protect your factory from catastrophic blackout death spirals by automatically pausing heavy consumers (such as Smelters, Electrolyzers, Arc Furnaces, Computing Data Centers, Research Labs, etc.) during power or fuel shortages, and smoothly bringing them back online in controlled stages.
+
+Compatible with vanilla saves — safely added to or removed from existing saves at any time.
 
 ---
 
 ## Features
 
-1. **Dedicated Governor Window (`Shift + P`)**:
-   - Live grid metrics: Real-time generation capacity (MW), power demand (MW), net reserve (MW), and percentage.
-   - Global rules for all electric machines (Smelters, Blast Furnaces, Electric Arc Furnaces, Electrolyzers, Mills, Crushers, etc.).
-   - Switch between **Percentage mode** (`%`) and **Megawatt mode** (`MW`).
-   - Sliders to configure trigger thresholds (e.g., pause if headroom is below 20% or below 10 MW).
+### 1. Dedicated Governor Window (`Alt + P`, `F8`, or Top HUD Icon)
+- **⚡ Global Rules Tab:**
+  - View live grid capacity, production, demand, and net reserve.
+  - **Live Island Telemetry:** Displays the exact count of built machines on the island and their live power consumption alongside maximum potential draw (e.g. `36 MW / 81 MW`).
+  - Configure pause thresholds per machine type using either **Percentage mode** (`%` of grid capacity) or exact **Megawatt mode** (`MW`).
+  - Real-time status indicators showing how many units are currently throttled or being tested.
+- **⏸ Paused Buildings Tab:**
+  - Grouped overview of all currently throttled machines categorized by building type.
+  - Displays whether a machine was paused by a Global Rule or an individual Local Override.
+  - Bulk resume buttons (`Resume All [Building]`) or global `Resume All`.
+- **📖 Guide & Help Tab:**
+  - In-game strategy guide for configuring priority tiers (Always On critical life-support, Tier I core refining, Tier II manufacturing, Tier III heavy consumers).
+  - Detailed explanation of how Staged Grid Restoration works.
 
-2. **Localized Machine Inspector Override**:
-   - Clicking on any machine opens its inspector with a native **⚡ Power Governor** panel.
-   - **Override Global Threshold**: Toggle to override the global prototype rule for this specific machine.
-   - Set custom threshold and view real-time status:
-     - `● Normal Operation (Reserve OK)`
-     - `⏸ Auto-Throttled (Grid reserve below threshold)`
+### 2. Staged Grid Restoration (Blackout Loop Prevention)
+In Captain of Industry, power generators only produce what buildings demand. When buildings pause, demand drops and generators throttle down. Unpausing everything at once would create an immediate load shock and cause endless blackout flickering.
+- **10-Second Stability Check:** When the grid satisfies 100% of demand (zero deficit) for 10 continuous seconds, the governor safely unpauses **ONE** single building to test real generator headroom.
+- **Progressive Ramp-Up:** If generators absorb the load smoothly, that building remains active, and 10 seconds later the next building is tested.
+- **Overload Protection & Backoff:** If unpausing triggers a deficit (generators still lack steam/fuel), the building is immediately re-paused within 1 second and the mod enters a 20-second cooldown to let fuel buffers rebuild.
+- **Manual Override:** Click `[Resume All]` at any time to bypass the test and restart all machines immediately.
 
-3. **Hysteresis & Anti-Flicker Protection**:
-   - Built-in +2% / +1.0 MW buffer when unpausing to prevent machines from rapidly oscillating between on and off states every tick.
-   - Throttled state memory ensures the mod only unpauses machines it throttled, preserving manual player pauses.
+### 3. Local Machine Inspector Override
+- Clicking any machine on the map opens its inspector with a native **⚡ Power Governor** override panel.
+- **Override Global Threshold:** Toggle to assign custom thresholds to high-priority individual machines.
+- Real-time status display (`● Normal Operation` vs `⏸ Auto-Throttled`).
 
-4. **Persistent Settings**:
-   - Settings are automatically saved to `%APPDATA%\Captain of Industry\Mods\PowerThresholdMod\settings.json`.
+### 4. Zero Simulation Overhead
+- Leverages the game's internal `ElectricityManager` cached prototype statistics.
+- When the window is closed, there is **zero extra CPU overhead** on tick simulation.
 
 ---
 
 ## Controls
 
-| Action | Control |
+| Action | Shortcut |
 |---|---|
-| Toggle Governor Window | `Shift + P` |
-| Machine Override | Click machine -> Scroll to bottom of inspector panel |
+| Toggle Governor Window | `Alt + P` or `F8` or Click the ⚡ icon in the top calendar HUD |
+| Machine Inspector Override | Click machine -> Scroll to bottom of inspector panel |
+| Close Window | `Esc` or `Alt + P` or `F8` |
 
 ---
 
-## Development & Building
+## Installation & Upload
 
-### Prerequisites
-- .NET 8 SDK (installed on your system)
-- Captain of Industry installed (`H:\SteamLibrary\steamapps\common\Captain of Industry`)
+### For Players
+Extract the release `.zip` into:
+```
+%APPDATA%\Captain of Industry\Mods\
+```
+Ensure the folder structure is:
+`%APPDATA%\Captain of Industry\Mods\PowerThresholdMod\` containing `manifest.json`, `PowerThresholdMod.dll`, `0Harmony.dll`, and `thumbnail.png`.
 
-### Build & Deploy
-Run in this directory:
+### Development & Building
+Run in the project directory:
 ```bash
 dotnet build -c Release
 ```
-This automatically compiles the mod against `.NET Framework 4.8` / COI game assemblies and copies the output (`PowerThresholdMod.dll`, `0Harmony.dll`, `manifest.json`) directly to:
-`%APPDATA%\Captain of Industry\Mods\PowerThresholdMod`
+This automatically compiles against `.NET Framework 4.8` / COI game assemblies and deploys directly to your `%APPDATA%\Captain of Industry\Mods\PowerThresholdMod` folder.
 
 ---
 
-## File Structure
-- `Model/PowerThresholdModels.cs`: Threshold models, rule definitions, and modes (`Percentage` vs `MegaWatts`).
-- `Engine/PowerGovernorManager.cs`: Grid metrics reader, periodic evaluation loop, and auto-pause/unpause engine.
-- `UI/PowerGovernorWindow.cs`: Native in-game management window with live grid telemetry and per-machine-type sliders.
-- `UI/MachineInspectorPatch.cs`: Harmony hook into `MachineInspector` to embed instance-level override controls.
-- `PowerThresholdModEntry.cs`: Mod entry point implementing `Mafi.Core.Mods.IMod`.
+## License & Credits
+- **Author:** rob-oppen
+- Developed for **Captain of Industry** (v0.8.0+).

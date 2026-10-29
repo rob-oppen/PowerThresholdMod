@@ -92,6 +92,7 @@
   <Target Name="DeployToModsFolder" AfterTargets="PostBuildEvent" Condition="'$(DeployToModsFolder)' == 'true'">
     <MakeDir Directories="$(COI_MODS)\$(AssemblyName)" />
     <Copy SourceFiles="manifest.json" DestinationFolder="$(COI_MODS)\$(AssemblyName)\" />
+    <Copy SourceFiles="thumbnail.png" DestinationFolder="$(COI_MODS)\$(AssemblyName)\" Condition="Exists('thumbnail.png')" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(COI_MODS)\$(AssemblyName)\" />
     <Copy SourceFiles="$(TargetDir)0Harmony.dll" DestinationFolder="$(COI_MODS)\$(AssemblyName)\" Condition="Exists('$(TargetDir)0Harmony.dll')" />
   </Target>

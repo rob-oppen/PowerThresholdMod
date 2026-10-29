@@ -1,16 +1,21 @@
-﻿{
+{
   "id": "PowerThresholdMod",
   "version": "1.0.0",
   "display_name": "Power Threshold Governor",
-  "description_short": "Automatically pause or unpause machines based on electric grid capacity and headroom.",
-  "description_long": "<b>Power Threshold Governor</b>\n\nAllows players to configure smart electricity thresholds (either as a percentage of total grid output or as an absolute Megawatt headroom reserve) to automatically throttle high-draw machines (such as Smelters, Blast Furnaces, Electric Arc Furnaces, Electrolyzers, etc.) during power strain or brownouts.\n\n<b>Features:</b>\n- <b>Dedicated Manager Window:</b> View live grid capacity, demand, and reserve with custom rules per machine type (Alt+P or F8 or Top HUD Icon).\n- <b>Localized Machine Override:</b> Click any machine to set instance-specific overrides directly in its inspector.\n- <b>Hysteresis Protection:</b> Built-in buffer prevents rapid flickering between on and off states.",
+  "description_short": "Smart electric power governor. Automatically manages and pauses heavy consumers based on grid capacity to prevent blackouts.",
+  "description_long": "<b>Power Threshold Governor</b>\n\nAn intelligent electrical load-shedding and power management system for <b>Captain of Industry</b>. Protect your factory from catastrophic blackout death spirals by automatically pausing non-critical, heavy consumers during fuel or power shortages, and smoothly bringing them back online in controlled stages.\n\n<b>Key Features:</b>\n• <b>⚡ Global Rules Tab:</b> Configure pause thresholds for every electric consumer on the island—either as a percentage of total grid capacity (<b>%</b>) or exact power output (<b>MW</b>).\n• <b>📊 Live Island Telemetry:</b> Displays the real-time count of built machines on the island and their live power consumption alongside maximum potential draw (e.g. <i>36 MW / 81 MW</i>).\n• <b>⏸ Paused Buildings Tab:</b> Grouped overview of all currently throttled machines with one-click bulk resume buttons.\n• <b>🛡️ Staged Grid Restoration:</b> Sophisticated blackout loop prevention. When power recovers, the governor safely tests one machine at a time with instant deficit abort and backoff cooldowns to prevent rapid on/off flickering.\n• <b>🔧 Local Machine Inspector Overrides:</b> Click any machine on the map to set custom, instance-specific threshold overrides directly in its native inspector panel.\n• <b>🖱️ Easy Access:</b> Accessible via top HUD power button, <b>Alt + P</b>, or <b>F8</b>.\n\n<i>Compatible with vanilla saves — safely added to or removed from existing saves.</i>",
   "authors": [
-    "User"
+    "rob-oppen"
   ],
+  "min_game_version": "0.8.0",
+  "max_verified_game_version": "0.8.8",
   "primary_dlls": [
     "0Harmony.dll",
     "PowerThresholdMod.dll"
   ],
+  "mod_dependencies": [],
+  "optional_mod_dependencies": [],
+  "incompatible_mods": [],
   "non_locking_dll_load": true,
   "can_add_to_saved_game": true,
   "can_remove_from_saved_game": true,
