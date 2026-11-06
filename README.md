@@ -11,14 +11,20 @@ Compatible with vanilla saves — safely added to or removed from existing saves
 ## Features
 
 ### 1. Dedicated Governor Window (`Alt + P`, `F8`, or Top HUD Icon)
-- **⚡ Building Selection Tab:**
+- **⚡ Building Types Tab:**
   - View live grid capacity, production, demand, and net surplus/deficit.
   - **Live Island Telemetry:** Displays the exact count of built machines on the island and their live power consumption alongside maximum potential draw (e.g. `36 MW / 81 MW`).
-  - **Simple One-Click Selection:** Simply check the box for each building type you want the governor to pause during power shortages (e.g. Arc Furnaces, Computing Data Centers, Research Labs). No confusing percentages or megawatt threshold sliders needed.
+  - **Simple One-Click Selection:** Simply check the box for each building type you want the governor to pause during power shortages (e.g. Arc Furnaces, Computing Data Centers, Research Labs).
   - Real-time status indicators showing which machines are active, exempt, or throttled, including priority span (e.g. `⏸ 3 off (P8..P10)`).
+- **📦 Recipe Outputs Tab (Multi-Recipe Support):**
+  - **Product-Targeted Shedding:** Shed machines based on what product they are currently producing (e.g. **Steel**, **Molten Iron**, **Silicon**, **Fertilizer**).
+  - **Multi-Recipe Consolidation:** If an output product like **Steel** can be made from multiple recipes (e.g. Iron Ore, Crushed Iron, or Scrap Iron), all machines running any of these recipes are conveniently grouped under that single product.
+  - **Fine-Grained Control:** Leave Arc Furnaces unchecked in Building Types, but check Steel in Recipe Outputs. Only Arc Furnaces making Steel will pause during deficits, leaving Molten Iron furnaces running uninterrupted!
+  - Real-time machine count and power metrics for every product line.
 - **⏸ Paused Buildings Tab:**
   - Grouped overview of all currently throttled machines categorized by building type.
   - Displays color-coded in-game General Priority badges (`[ P10 ]`, `[ P1 ]`, etc.) indicating shedding and restoration order.
+  - Shows active output product tags (e.g. `[ Steel ]`).
   - One-click focus camera (`View`) and granular resume options (`Resume All [Building]` or global `Resume All`).
 - **📖 Guide & Help Tab:**
   - In-game strategy guide explaining demand-driven load shedding, priority strategy, and stepped restoration.
@@ -26,8 +32,8 @@ Compatible with vanilla saves — safely added to or removed from existing saves
 ### 2. Demand-Driven Load Shedding (Demand > Supply)
 The governor engages **ONLY when demand outpaces supply for power** (or during a blackout deficit):
 - **Demand-Supply Matching:** The governor pauses selected buildings strictly until demand and supply match.
-- **Priority Shedding (Priority 10 -> Priority 1):** If you have multiple machines (e.g. 10 Arc Furnaces), the governor pauses the Priority 10 machine first, stepping all the way down to Priority 1 last.
-- **Stepped Restoration (Priority 1 -> Priority 10):** When grid power stabilizes, machines are re-enabled in reverse order starting at Priority 1 first, slowly increasing towards Priority 10.
+- **Priority Shedding (Priority 10 -> Priority 1):** If you have multiple machines (e.g. 10 Arc Furnaces), the governor pauses Priority 10 machines FIRST, stepping all the way down to Priority 1 LAST.
+- **Stepped Restoration (Priority 1 -> Priority 10):** When grid power stabilizes, machines are re-enabled in reverse order starting at Priority 1 FIRST, slowly increasing towards Priority 10.
 - **Zero Configuration:** Simply set each building's priority using the game's built-in priority button (or press `P` to use the game's priority tool).
 
 ### 3. Stepped Grid Restoration (Blackout Loop Prevention)
