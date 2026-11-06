@@ -1,5 +1,4 @@
 using Label = Mafi.Unity.UiToolkit.Library.Label;
-using Slider = Mafi.Unity.UiToolkit.Library.Slider;
 using Toggle = Mafi.Unity.UiToolkit.Library.Toggle;
 using Display = Mafi.Unity.Ui.Library.Display;
 using System;
@@ -100,7 +99,11 @@ namespace PowerThresholdMod.UI
             {
                 var em = s_instance.m_manager.ElectricityManager;
                 var concrete = em as ElectricityManager;
+                Electricity cap = (concrete != null && concrete.MaxGenerationCapacity.IsPositive) ? concrete.MaxGenerationCapacity : em.GenerationCapacityThisTick;
+                Electricity prod = (concrete != null) ? concrete.GeneratedThisTick : em.ConsumedThisTick;
+                s_instance.UpdateStatusText(em.DemandedThisTick, em.ConsumedThisTick, prod, cap);
 
+                // Update row statistics
                 if (concrete != null)
                 {
                     var statsMap = new Dictionary<IEntityProto, ElectricityManager.ConsumptionPerProto>();
@@ -114,25 +117,12 @@ namespace PowerThresholdMod.UI
                     s_instance.m_cachedConsumptionStats = statsMap;
                 }
 
-                Electricity cap = (concrete != null && concrete.MaxGenerationCapacity.IsPositive)
-                    ? concrete.MaxGenerationCapacity
-                    : em.GenerationCapacityThisTick;
-
-                Electricity prod = (concrete != null)
-                    ? concrete.GeneratedThisTick
-                    : em.ConsumedThisTick;
-
-                Electricity dem = em.DemandedThisTick;
-                Electricity con = em.ConsumedThisTick;
-
-                s_instance.UpdateStatusText(dem, con, prod, cap);
-
                 foreach (var action in s_instance.m_rowRefreshActions)
                 {
                     action();
                 }
 
-                s_instance.refreshPausedTab();
+                s_instance.refreshPausedBuildingsIfChanged();
             }
         }
 
@@ -144,7 +134,6 @@ namespace PowerThresholdMod.UI
             m_inspectorsManager = inspectorsManager;
             m_cameraController = cameraController;
 
-            // Comfortable dimensions for electrical building list, tabs, icons, and guide
             WindowSize(930.px(), 690.px());
             MakeMovableAndEnablePositionSaving();
             EnablePinning();
@@ -177,7 +166,7 @@ namespace PowerThresholdMod.UI
             headerPanel.Body.PaddingTopBottom(4.pt()).Gap(4.px());
 
             // Fixed minimum widths prevent text changes from shifting or moving UI elements
-            m_lblGridStatus = new Label(new LocStrFormatted("Grid Status: Calculating...")).MinWidth(new Px(400));
+            m_lblGridStatus = new Label(new LocStrFormatted("Grid Status: Calculating...")).MinWidth(new Px(420));
             m_btnResumeAll = new ButtonText(new LocStrFormatted("Resume All"), null).MinWidth(new Px(160));
             m_btnResumeAll.Visible(false);
 
@@ -223,7 +212,7 @@ namespace PowerThresholdMod.UI
                 m_cachedConsumptionStats = statsMap;
             }
 
-            // 2. Tabbed Section: Global Rules, Paused Buildings, and User Guide
+            // 2. Tabbed Section: Building Selection, Paused Buildings, and User Guide
             var tabContainer = new TabContainer();
             tabContainer.Height(new Px(450));
 
@@ -231,7 +220,7 @@ namespace PowerThresholdMod.UI
             var pausedContent = buildPausedBuildingsTab();
             var guideContent = buildGuideTab();
 
-            tabContainer.AddTab(new LocStrFormatted("⚡ Global Rules"), rulesContent, scroll: false);
+            tabContainer.AddTab(new LocStrFormatted("⚡ Building Selection"), rulesContent, scroll: false);
             tabContainer.AddTab(new LocStrFormatted("⏸ Paused Buildings"), pausedContent, scroll: false);
             tabContainer.AddTab(new LocStrFormatted("📖 Guide & Help"), guideContent, scroll: false);
 
@@ -259,15 +248,12 @@ namespace PowerThresholdMod.UI
 
             // Column Header Row
             var headerRow = new Row().AlignItemsCenter().Gap(8.px()).PaddingTopBottom(4.px());
-            headerRow.Add(new Label(LocStrFormatted.Empty).Width(22.px()).NoShrink()); // Toggle spacer
+            headerRow.Add(new Label(new LocStrFormatted("Shed")).FontBold().Color(ColorRgba.LightGray).Width(32.px()).NoShrink());
             headerRow.Add(new Label(LocStrFormatted.Empty).Width(22.px()).NoShrink()); // Icon spacer
             headerRow.Add(new Label(new LocStrFormatted("Built")).FontBold().Color(ColorRgba.LightGray).Width(38.px()).NoShrink());
-            headerRow.Add(new Label(new LocStrFormatted("Building Type")).FontBold().Color(ColorRgba.LightGray).Width(170.px()).NoShrink());
-            headerRow.Add(new Label(new LocStrFormatted("Power Usage")).FontBold().Color(ColorRgba.LightGray).Width(140.px()).NoShrink());
-            headerRow.Add(new Label(new LocStrFormatted("Mode")).FontBold().Color(ColorRgba.LightGray).Width(55.px()).NoShrink());
-            headerRow.Add(new Label(new LocStrFormatted("Threshold")).FontBold().Color(ColorRgba.LightGray).Width(125.px()).NoShrink());
-            headerRow.Add(new Label(LocStrFormatted.Empty).Width(105.px()).NoShrink()); // Value spacer
-            headerRow.Add(new Label(new LocStrFormatted("Status")).FontBold().Color(ColorRgba.LightGray).Width(115.px()).NoShrink());
+            headerRow.Add(new Label(new LocStrFormatted("Building Type")).FontBold().Color(ColorRgba.LightGray).Width(190.px()).NoShrink());
+            headerRow.Add(new Label(new LocStrFormatted("Power Usage")).FontBold().Color(ColorRgba.LightGray).Width(150.px()).NoShrink());
+            headerRow.Add(new Label(new LocStrFormatted("Governor Status (Priority-Based)")).FontBold().Color(ColorRgba.LightGray).MinWidth(new Px(240)));
             scroll.Add(headerRow);
 
             // Group buildings by display name to prevent duplicates (e.g. lift height variants)
@@ -290,17 +276,14 @@ namespace PowerThresholdMod.UI
                 {
                     var r = m_manager.GetGlobalRule(p.Id.Value);
                     r.IsEnabled = isAnyEnabled;
-                    r.Mode = rule.Mode;
-                    r.PercentThreshold = rule.PercentThreshold;
-                    r.MwThreshold = rule.MwThreshold;
                 }
 
-                var row = new Row().AlignItemsCenter().Gap(8.px()).PaddingTopBottom(2.px());
+                var row = new Row().AlignItemsCenter().Gap(8.px()).PaddingTopBottom(3.px());
 
-                // Standalone toggle with initial value properly set and empty label hidden
+                // Standalone toggle: select which building types the governor can pause
                 var chkEnabled = new Toggle(standalone: true).Value(isAnyEnabled);
                 chkEnabled[1].Visible(false);
-                chkEnabled.Width(22.px()).NoShrink();
+                chkEnabled.Width(32.px()).NoShrink();
 
                 // Add official building icon
                 UiComponent iconComp;
@@ -317,31 +300,13 @@ namespace PowerThresholdMod.UI
                 dispCount.Width(38.px()).NoShrink();
 
                 var lblName = new Label(new LocStrFormatted(protoName))
-                    .Width(170.px()).NoShrink().NoTextWrap();
+                    .Width(190.px()).NoShrink().NoTextWrap();
 
                 var lblPower = new Label(new LocStrFormatted("-- / --"))
-                    .Width(140.px()).NoShrink().NoTextWrap();
+                    .Width(150.px()).NoShrink().NoTextWrap();
 
-                var btnMode = new ButtonText(new LocStrFormatted(rule.Mode == ThresholdMode.Percentage ? "[ % ]" : "[ MW ]"), null)
-                    .Width(55.px()).NoShrink();
-
-                float maxSliderRange = (rule.Mode == ThresholdMode.Percentage)
-                    ? 100f
-                    : Math.Max(100f, (float)Math.Ceiling(m_manager.LastCapacityMw / 50f) * 50f);
-
-                var slider = new Slider();
-                // CRITICAL: Set ValueFormatter BEFORE Range() and Value() so internal label is silenced from the start
-                slider.ValueFormatter(Option.Some<Func<Percent, LocStrFormatted>>(p => LocStrFormatted.Empty));
-                slider[2].Visible(false); // Hide internal m_valueLabel completely so it takes 0 space
-                slider[2].Width(0.px());
-                slider.Range(0f, maxSliderRange);
-                slider.Value(rule.ThresholdValue, notify: false);
-                slider.Width(125.px()).NoShrink();
-
-                var lblValue = new Label(new LocStrFormatted(FormatRuleValue(rule)))
-                    .Width(105.px()).NoShrink().NoTextWrap();
                 var lblStatus = new Label(LocStrFormatted.Empty)
-                    .Width(115.px()).NoShrink().NoTextWrap();
+                    .MinWidth(new Px(240)).NoTextWrap();
 
                 chkEnabled.OnValueChanged(val =>
                 {
@@ -356,40 +321,6 @@ namespace PowerThresholdMod.UI
                     }
                     m_manager.SaveSettings();
                     RefreshStatusIfOpen();
-                });
-
-                // Updates threshold cleanly across all variants in the group
-                slider.OnValueChanged((prev, current) =>
-                {
-                    float rounded = (float)Math.Round(current, 0);
-                    foreach (var p in protoList)
-                    {
-                        var r = m_manager.GetGlobalRule(p.Id.Value);
-                        r.ThresholdValue = rounded;
-                    }
-                    lblValue.Value(new LocStrFormatted(FormatRuleValue(rule)));
-                    m_manager.SaveSettings();
-                });
-
-                btnMode.OnClick(() =>
-                {
-                    var newMode = (rule.Mode == ThresholdMode.Percentage) ? ThresholdMode.MegaWatts : ThresholdMode.Percentage;
-                    foreach (var p in protoList)
-                    {
-                        var r = m_manager.GetGlobalRule(p.Id.Value);
-                        r.Mode = newMode;
-                    }
-
-                    float newMax = (newMode == ThresholdMode.Percentage)
-                        ? 100f
-                        : Math.Max(100f, (float)Math.Ceiling(m_manager.LastCapacityMw / 50f) * 50f);
-
-                    slider.Range(0f, newMax);
-                    slider.Value(rule.ThresholdValue, notify: false);
-
-                    btnMode.Value(new LocStrFormatted(newMode == ThresholdMode.Percentage ? "[ % ]" : "[ MW ]"));
-                    lblValue.Value(new LocStrFormatted(FormatRuleValue(rule)));
-                    m_manager.SaveSettings();
                 });
 
                 // Row refresh hook to update building count, power usage, and throttled status
@@ -429,10 +360,18 @@ namespace PowerThresholdMod.UI
                         lblPower.Color(new ColorRgba(120, 130, 150, 180));
                     }
 
+                    bool isEnabledNow = protoList.Any(p => m_manager.GetGlobalRule(p.Id.Value).IsEnabled);
                     bool isTesting = protoList.Any(p => m_manager.IsProtoBeingTested(p.Id.Value));
-                    if (isTesting)
+
+                    if (!isEnabledNow)
+                    {
+                        lblStatus.Value(new LocStrFormatted("Exempt (Never Paused)"));
+                        lblStatus.Color(new ColorRgba(120, 135, 155, 180));
+                    }
+                    else if (isTesting)
                     {
                         lblStatus.Value(new LocStrFormatted("🔄 Testing unpause..."));
+                        lblStatus.Color(ColorRgba.Cyan);
                     }
                     else
                     {
@@ -451,15 +390,17 @@ namespace PowerThresholdMod.UI
                             {
                                 lblStatus.Value(new LocStrFormatted($"⏸ {pausedCount} off"));
                             }
+                            lblStatus.Color(ColorRgba.Orange);
                         }
                         else
                         {
-                            lblStatus.Value(LocStrFormatted.Empty);
+                            lblStatus.Value(new LocStrFormatted("Active (Protected by P1..P10)"));
+                            lblStatus.Color(new ColorRgba(100, 230, 120, 255));
                         }
                     }
                 });
 
-                row.Add(chkEnabled, iconComp, dispCount, lblName, lblPower, btnMode, slider, lblValue, lblStatus);
+                row.Add(chkEnabled, iconComp, dispCount, lblName, lblPower, lblStatus);
                 scroll.Add(row);
             }
 
@@ -487,7 +428,7 @@ namespace PowerThresholdMod.UI
             topRow.Add(m_lblPausedSummary, m_btnResumeAllInTab);
 
             var lblDesc = new Label(new LocStrFormatted(
-                "Buildings automatically paused by the governor to prevent brownouts. Click 'View' to focus the camera on any building."
+                "Buildings paused during power shortages. Shedding starts at Priority 10 first down to Priority 1 last. Restoration occurs in reverse (P1 first up to P10)."
             ));
 
             headerCard.Add(topRow, lblDesc);
@@ -514,7 +455,7 @@ namespace PowerThresholdMod.UI
             if (m_lblPausedSummary != null)
             {
                 m_lblPausedSummary.Value(new LocStrFormatted(
-                    count == 0 ? "Currently Paused: 0 Buildings (Grid Stable)" : $"Currently Paused: {count} Building{(count > 1 ? "s" : "")}"
+                    count == 0 ? "Currently Paused: 0 Buildings (Supply Meets Demand)" : $"Currently Paused: {count} Building{(count > 1 ? "s" : "")}"
                 ));
             }
 
@@ -531,9 +472,9 @@ namespace PowerThresholdMod.UI
                 emptyRow.Add(new Icon(Assets.Unity.UserInterface.General.Checkmark_v2_svg).Size(28.px(), 28.px()));
 
                 var emptyTextCol = new Column().Gap(4.px());
-                emptyTextCol.Add(new Label(new LocStrFormatted("All Configured Buildings Are Running")).FontBold().Color(ColorRgba.Green));
+                emptyTextCol.Add(new Label(new LocStrFormatted("All Selected Buildings Are Running")).FontBold().Color(ColorRgba.Green));
                 emptyTextCol.Add(new Label(new LocStrFormatted(
-                    "No buildings are currently throttled by the Power Governor. When power production drops below your configured thresholds, paused buildings will appear here along with their rule source (Global or Local)."
+                    "Power supply satisfies 100% of demand. If demand outpaces supply, the governor will automatically pause non-essential machines based on their in-game priority."
                 )));
 
                 emptyRow.Add(emptyTextCol);
@@ -547,7 +488,6 @@ namespace PowerThresholdMod.UI
             foreach (var group in groups)
             {
                 var first = group.First();
-                string groupName = group.Key;
                 int groupCount = group.Count();
 
                 var groupCard = new Column()
@@ -586,7 +526,7 @@ namespace PowerThresholdMod.UI
                 headerRow.Add(iconComp, lblTitle, btnResumeType);
                 groupCard.Add(headerRow);
 
-                // Individual instances list under this building type
+                // Individual instances list under this building type (sorted P1 to P10 so next-to-restore appears first)
                 var instancesCol = new Column().PaddingLeft(16.px()).Gap(4.px());
                 foreach (var item in group)
                 {
@@ -600,19 +540,18 @@ namespace PowerThresholdMod.UI
                         .Color(GetPriorityColor(item.GeneralPriority))
                         .MinWidth(new Px(55));
 
-                    string ruleValStr = FormatRuleValue(item.EffectiveRule);
                     UiComponent badgeComp;
                     if (item.IsLocalOverride)
                     {
-                        badgeComp = new Label(new LocStrFormatted($"[ Local: {ruleValStr} ]"))
+                        badgeComp = new Label(new LocStrFormatted("[ Local Override ]"))
                             .Color(ColorRgba.Cyan)
-                            .MinWidth(new Px(210));
+                            .MinWidth(new Px(150));
                     }
                     else
                     {
-                        badgeComp = new Label(new LocStrFormatted($"[ Global: {ruleValStr} ]"))
+                        badgeComp = new Label(new LocStrFormatted("[ Auto-Shed ]"))
                             .Color(ColorRgba.LightBlue)
-                            .MinWidth(new Px(210));
+                            .MinWidth(new Px(150));
                     }
 
                     var btnFocus = new ButtonText(new LocStrFormatted("View"), null).MinWidth(new Px(60));
@@ -643,7 +582,7 @@ namespace PowerThresholdMod.UI
             }
         }
 
-        private void refreshPausedTab()
+        private void refreshPausedBuildingsIfChanged()
         {
             if (m_pausedRowsContainer == null) return;
 
@@ -672,21 +611,19 @@ namespace PowerThresholdMod.UI
             // Header Banner
             var titleRow = new Row().AlignItemsCenter().Gap(8.px());
             titleRow.Add(new Icon(Assets.Unity.UserInterface.General.ElectricityColored_svg).Size(24.px(), 24.px()));
-            titleRow.Add(new Label(new LocStrFormatted("ELECTRIC POWER GOVERNOR - COMPREHENSIVE GUIDE")).FontBold());
+            titleRow.Add(new Label(new LocStrFormatted("ELECTRIC POWER GOVERNOR - PRIORITY USER GUIDE")).FontBold());
 
-            // Section 1: How Thresholds Work (Easy Numbers)
+            // Section 1: How Demand-Driven Load Shedding Works
             var card1 = createCard();
             var sec1Header = new Row().AlignItemsCenter().Gap(6.px());
             sec1Header.Add(new Icon(Assets.Unity.UserInterface.Toolbar.Stats_svg).Size(18.px(), 18.px()));
-            sec1Header.Add(new Label(new LocStrFormatted("1. How Thresholds Work (Simple Round Numbers)")).FontBold());
+            sec1Header.Add(new Label(new LocStrFormatted("1. How Demand-Driven Load Shedding Works")).FontBold());
 
             var p1 = new Label(new LocStrFormatted(
-                "Suppose your island has a total generator capacity of 100 MW:\n\n" +
-                "• [%] Percentage Mode: Pauses the building when power production drops below a percentage of grid capacity.\n" +
-                "   - Set to 20%  -> Pauses when production drops below 20 MW (only during severe shortages).\n" +
-                "   - Set to 50%  -> Pauses when production drops below 50 MW (sheds load at moderate deficits).\n" +
-                "   - Set to 75%  -> Pauses when production drops below 75 MW (first to shut down as soon as power slips).\n\n" +
-                "• [MW] MegaWatts Mode: Pauses when production drops below an exact megawatt number (e.g. Pause if < 30 MW)."
+                "No complicated percentage or megawatt math required:\n\n" +
+                "• 1. Select Buildings: Simply tick the checkbox for each building type you want the governor to pause during shortages (e.g. Arc Furnaces, Computing Data Centers, Research Labs).\n\n" +
+                "• 2. Demand Outpaces Supply: The governor ONLY engages when total island electrical demand exceeds generator supply or when a blackout deficit is detected.\n\n" +
+                "• 3. Priority Shedding (P10 down to P1): When demand outpaces supply, the governor pauses Priority 10 items first, stepping down until demand and supply are balanced. Critical machines (P1) remain running!"
             ));
             card1.Add(sec1Header, p1);
 
@@ -694,66 +631,42 @@ namespace PowerThresholdMod.UI
             var card2 = createCard();
             var sec2Header = new Row().AlignItemsCenter().Gap(6.px());
             sec2Header.Add(new Icon(Assets.Unity.UserInterface.Toolbar.Power_svg).Size(18.px(), 18.px()));
-            sec2Header.Add(new Label(new LocStrFormatted("2. Recommended Priority Strategy")).FontBold());
+            sec2Header.Add(new Label(new LocStrFormatted("2. Recommended Strategy")).FontBold());
 
             var pTiersIntro = new Label(new LocStrFormatted(
-                "Configure your buildings into clear priority tiers so vital infrastructure never loses power:"
+                "Keep vital life-support infrastructure unchecked so it can never be paused:"
             ));
 
             var tierAlwaysOn = createTierBox(
                 iconPath: Assets.Unity.UserInterface.General.Checkmark_v2_svg,
-                title: "ALWAYS ON (CRITICAL - DO NOT PAUSE)",
-                buildings: "Storage, Balancers, Electric Boilers, Maintenance I & II Depots, Water Pumps, Fuel Refineries, Sorting Plants, Lifts, Sorters",
-                desc: "• Why: If maintenance depots, water/fuel pumps, or resource sorting/logistics lose power, machines break down and boilers starve, triggering an unrecoverable blackout death spiral.\n• Action: Leave the checkbox UNCHECKED for these so they always receive full power.",
+                title: "ALWAYS ON (CRITICAL - LEAVE UNCHECKED)",
+                buildings: "Storage, Balancers, Electric Boilers, Maintenance Depots, Water Pumps, Fuel Refineries, Sorting Plants, Lifts, Sorters",
+                desc: "• Why: If maintenance depots, water/fuel pumps, or logistics lose power, generators starve of coal/water and trigger an unrecoverable blackout death spiral.\n• Action: Leave the checkbox UNCHECKED for these so they always receive full power.",
                 titleColor: ColorRgba.Green
-            );
-
-            var tier1 = createTierBox(
-                iconPath: Assets.Unity.UserInterface.Toolbar.Metallurgy_svg,
-                title: "TIER I - CORE REFINING & CRITICAL PROCESSING (e.g. 15% - 25% Low Threshold)",
-                buildings: "Alloy Mixers, Copper Electrolysis, Oxygen Furnaces, Oil Refining & Fuel Processing",
-                desc: "• Why: These electric machines produce materials and diesel fuel essential for maintenance.\n• Action: Set a low threshold (e.g. 20%) so they only shut down in severe emergencies.\n(Note: Blast Furnaces and Metal Casters do not use electricity and run without grid power).",
-                titleColor: ColorRgba.Gold
-            );
-
-            var tier2 = createTierBox(
-                iconPath: Assets.Unity.UserInterface.Toolbar.Machines_svg,
-                title: "TIER II - NON-CORE SMELTERS & SECONDARY GOODS (e.g. 35% - 50% Mid Threshold)",
-                buildings: "Non-Core Smelters (Glass, Gold, Silicon), Concrete Mixers, Chemical Plants, Assemblers",
-                desc: "• Why: These produce construction parts and advanced materials that are useful but not immediately life-or-death.\n• Action: Set a moderate threshold (e.g. 40%) to shed load and protect Tier I supplies during fuel dips.",
-                titleColor: ColorRgba.Cyan
-            );
-
-            var tier3 = createTierBox(
-                iconPath: Assets.Unity.UserInterface.Toolbar.Research_svg,
-                title: "TIER III - HEAVY CONSUMERS (FIRST TO PAUSE - e.g. 60% - 80% High Threshold)",
-                buildings: "Arc Furnaces, Data Centres / Mainframes (Computing), Research Labs",
-                desc: "• Why: Arc Furnaces draw enormous electricity (1.5MW - 3MW each!), and Computing/Research can easily pause without harming factory survival.\n• Action: Set a high threshold (e.g. 65% - 75%) so they are the FIRST to pause, instantly stabilizing the grid.",
-                titleColor: ColorRgba.Orange
             );
 
             var priorityBox = createTierBox(
                 iconPath: Assets.Unity.UserInterface.Toolbar.Stats_svg,
                 title: "BUILT-IN GENERAL PRIORITY INTEGRATION (P1 - P10)",
-                buildings: "All configured buildings and machines on your island",
-                desc: "• Game Priority Integration: The governor directly reads the in-game General Priority (P1 to P10) set on each individual building.\n• Smart Shedding (P10 -> P1): If you have multiple machines (e.g. 10 Arc Furnaces) and power is insufficient, Priority 10 items pause FIRST, stepping all the way down to Priority 1 LAST.\n• Stepped Recovery (P1 -> P10): When the power grid stabilizes, restoration begins at Priority 1 FIRST, then slowly ramps up to Priority 10.\n• Quick Setup: Click any machine and set its priority slider, or press 'P' to open the game's built-in priority tool.",
+                buildings: "All checked machines on your island",
+                desc: "• In-Game Priority Integration: The governor directly reads the in-game General Priority (P1 to P10) set on each individual machine.\n• Shedding Order (P10 -> P1): If you have 10 Arc Furnaces and power is insufficient, Priority 10 items pause FIRST, stepping down to Priority 1 LAST until supply and demand match.\n• Stepped Recovery (P1 -> P10): When the power grid stabilizes, restoration begins at Priority 1 FIRST, then slowly ramps up to Priority 10.\n• Quick Setup: Click any machine and set its priority slider, or press 'P' to open the game's built-in priority tool.",
                 titleColor: ColorRgba.LightBlue
             );
 
-            card2.Add(sec2Header, pTiersIntro, tierAlwaysOn, tier1, tier2, tier3, priorityBox);
+            card2.Add(sec2Header, pTiersIntro, tierAlwaysOn, priorityBox);
 
-            // Section 3: How Staged Grid Restoration Works (Blackout Loop Prevention)
+            // Section 3: How Stepped Restoration Works
             var card3 = createCard();
             var sec3Header = new Row().AlignItemsCenter().Gap(6.px());
             sec3Header.Add(new Icon(Assets.Unity.UserInterface.General.InfoBubble_svg).Size(18.px(), 18.px()));
-            sec3Header.Add(new Label(new LocStrFormatted("3. Staged Grid Restoration (Blackout Loop Prevention)")).FontBold());
+            sec3Header.Add(new Label(new LocStrFormatted("3. Stepped Restoration (Blackout Loop Prevention)")).FontBold());
 
             var p3 = new Label(new LocStrFormatted(
                 "In Captain of Industry, generators only produce what buildings demand. When buildings pause, demand drops and generators throttle down.\n\n" +
-                "• Avoid Sudden Crashes: If all machines unpaused at once, grid demand would spike instantly and overwhelm recovering boilers, causing machines to rapidly flicker ON and OFF in a blackout loop.\n" +
-                "• 10-Second Stability Check: When the grid satisfies 100% of demand (zero deficit) for 10 continuous seconds, the governor safely unpauses ONE single building to test real generator headroom.\n" +
-                "• Progressive Ramp-Up: If your generators absorb the new load smoothly, that building remains active, and 10 seconds later the next building is tested.\n" +
-                "• Overload Protection & Backoff: If reviving a machine creates a power deficit (generators still lack steam/coal), it is immediately re-paused within 1 second and the mod enters a 20-second cooldown so fuel buffers can rebuild.\n" +
+                "• Avoid Sudden Crashes: If all machines unpaused at once, grid demand would spike instantly and overwhelm recovering boilers, causing machines to rapidly flicker ON and OFF in an endless blackout loop.\n" +
+                "• 10-Second Stability Check: When the grid satisfies 100% of demand for 10 continuous seconds, the governor safely unpauses ONE single building (starting at Priority 1) to test real generator headroom.\n" +
+                "• Progressive Ramp-Up: If your generators absorb the load smoothly, that building remains active, and 10 seconds later the next machine (P1, P2... up to P10) is tested.\n" +
+                "• Overload Protection & Backoff: If reviving a machine causes demand to outpace supply, it is immediately re-paused within 1 second and the mod enters a 20-second cooldown so fuel buffers can rebuild.\n" +
                 "• Manual Override: Click [Resume All] at the top anytime if you know your fuel and steam supplies have fully recovered."
             ));
             card3.Add(sec3Header, p3);
@@ -785,17 +698,15 @@ namespace PowerThresholdMod.UI
             var lblTitle = new Label(new LocStrFormatted(title)).FontBold().Color(titleColor);
             headerRow.Add(lblTitle);
 
-            var lblBuildings = new Label(new LocStrFormatted($"• Buildings: {buildings}"));
+            var lblBuildings = new Label(new LocStrFormatted(buildings)).FontBold().Color(ColorRgba.White);
             var lblDesc = new Label(new LocStrFormatted(desc));
 
             box.Add(headerRow, lblBuildings, lblDesc);
             return box;
         }
 
-        public void UpdateStatusText(Electricity demand, Electricity consumed, Electricity production, Electricity capacity)
+        private void UpdateStatusText(Electricity demand, Electricity consumed, Electricity production, Electricity capacity)
         {
-            if (m_lblCapacity == null) return;
-
             int capKw = capacity.Value;
             int prodKw = production.Value;
             int demKw = demand.Value;
@@ -805,8 +716,6 @@ namespace PowerThresholdMod.UI
             float prodMw = (float)prodKw / 1000f;
             float demMw = (float)demKw / 1000f;
             float conMw = (float)conKw / 1000f;
-
-            float prodPct = (capKw > 0) ? ((float)prodKw / (float)capKw) * 100f : 0f;
 
             string capStr = (capKw >= 1000) ? $"{capMw:F2} MW" : capacity.Format().ToString();
             string prodStr = (prodKw >= 1000) ? $"{prodMw:F2} MW" : production.Format().ToString();
@@ -818,13 +727,20 @@ namespace PowerThresholdMod.UI
             m_lblDemand.Value(new LocStrFormatted($"Demand: {demStr}"));
             m_lblConsumed.Value(new LocStrFormatted($"Consumed: {conStr}"));
 
-            if (prodKw < demKw)
+            bool demandOutpacesSupply = demKw > capKw || demKw > conKw;
+            if (demandOutpacesSupply)
             {
-                m_lblGridStatus.Value(new LocStrFormatted($"Grid Status: Deficit is detected ({prodPct:F1}% of capacity)"));
+                int deficitKw = demKw - Math.Min(capKw, conKw);
+                float defMw = (float)deficitKw / 1000f;
+                m_lblGridStatus.Value(new LocStrFormatted($"Grid Status: ⚠️ Deficit! Demand exceeds supply (+{defMw:F2} MW)"));
+                m_lblGridStatus.Color(new ColorRgba(255, 110, 100, 255));
             }
             else
             {
-                m_lblGridStatus.Value(new LocStrFormatted($"Grid Status: Normal is detected ({prodPct:F1}% of capacity)"));
+                int surplusKw = Math.Max(0, capKw - demKw);
+                float surpMw = (float)surplusKw / 1000f;
+                m_lblGridStatus.Value(new LocStrFormatted($"Grid Status: Normal (Surplus: +{surpMw:F2} MW)"));
+                m_lblGridStatus.Color(new ColorRgba(100, 230, 120, 255));
             }
 
             m_lblRecoveryStatus.Value(new LocStrFormatted($"Auto-Recovery: {m_manager.GetRecoveryStatusText()}"));
@@ -847,15 +763,5 @@ namespace PowerThresholdMod.UI
             if (priority <= 7) return new ColorRgba(245, 210, 80, 255);  // Yellow/Amber (Medium priority)
             return new ColorRgba(255, 120, 100, 255);                    // Red/Coral (Low priority / paused first)
         }
-
-        private static string FormatRuleValue(MachinePowerRule rule)
-        {
-            return (rule.Mode == ThresholdMode.Percentage)
-                ? $"Pause if < {rule.ThresholdValue:F0}%"
-                : $"Pause if < {rule.ThresholdValue:F0} MW";
-        }
     }
 }
-
-
-

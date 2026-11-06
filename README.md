@@ -11,39 +11,39 @@ Compatible with vanilla saves — safely added to or removed from existing saves
 ## Features
 
 ### 1. Dedicated Governor Window (`Alt + P`, `F8`, or Top HUD Icon)
-- **⚡ Global Rules Tab:**
-  - View live grid capacity, production, demand, and net reserve.
+- **⚡ Building Selection Tab:**
+  - View live grid capacity, production, demand, and net surplus/deficit.
   - **Live Island Telemetry:** Displays the exact count of built machines on the island and their live power consumption alongside maximum potential draw (e.g. `36 MW / 81 MW`).
-  - Configure pause thresholds per machine type using either **Percentage mode** (`%` of grid capacity) or exact **Megawatt mode** (`MW`).
-  - Real-time status indicators showing how many units are currently throttled or being tested, including priority span (e.g. `⏸ 3 off (P8..P10)`).
+  - **Simple One-Click Selection:** Simply check the box for each building type you want the governor to pause during power shortages (e.g. Arc Furnaces, Computing Data Centers, Research Labs). No confusing percentages or megawatt threshold sliders needed.
+  - Real-time status indicators showing which machines are active, exempt, or throttled, including priority span (e.g. `⏸ 3 off (P8..P10)`).
 - **⏸ Paused Buildings Tab:**
   - Grouped overview of all currently throttled machines categorized by building type.
   - Displays color-coded in-game General Priority badges (`[ P10 ]`, `[ P1 ]`, etc.) indicating shedding and restoration order.
-  - Displays whether a machine was paused by a Global Rule or an individual Local Override.
-  - Bulk resume buttons (`Resume All [Building]`) or global `Resume All`.
+  - One-click focus camera (`View`) and granular resume options (`Resume All [Building]` or global `Resume All`).
 - **📖 Guide & Help Tab:**
-  - In-game strategy guide for configuring priority tiers (Always On critical life-support, Tier I core refining, Tier II manufacturing, Tier III heavy consumers).
-  - Detailed explanation of how Built-in General Priority Integration and Staged Grid Restoration work.
+  - In-game strategy guide explaining demand-driven load shedding, priority strategy, and stepped restoration.
 
-### 2. Built-in General Priority Integration (P1 - P10)
-Rather than pausing all machines of a building type simultaneously, the governor directly reads each machine's in-game **General Priority** (P1 to P10):
-- **Smart Shedding (Priority 10 -> Priority 1):** If power is insufficient (e.g. for 10 Arc Furnaces), the governor pauses the Priority 10 machine first, stepping all the way down to Priority 1 last until grid demand stabilizes.
-- **Stepped Restoration (Priority 1 -> Priority 10):** When grid power recovers, machines are re-enabled starting at Priority 1 first, slowly increasing towards Priority 10.
-- **Zero Configuration:** Simply set the building's priority using the game's built-in priority button (or press `P` to use the priority tool).
+### 2. Demand-Driven Load Shedding (Demand > Supply)
+The governor engages **ONLY when demand outpaces supply for power** (or during a blackout deficit):
+- **Demand-Supply Matching:** The governor pauses selected buildings strictly until demand and supply match.
+- **Priority Shedding (Priority 10 -> Priority 1):** If you have multiple machines (e.g. 10 Arc Furnaces), the governor pauses the Priority 10 machine first, stepping all the way down to Priority 1 last.
+- **Stepped Restoration (Priority 1 -> Priority 10):** When grid power stabilizes, machines are re-enabled in reverse order starting at Priority 1 first, slowly increasing towards Priority 10.
+- **Zero Configuration:** Simply set each building's priority using the game's built-in priority button (or press `P` to use the game's priority tool).
 
-### 3. Staged Grid Restoration (Blackout Loop Prevention)
+### 3. Stepped Grid Restoration (Blackout Loop Prevention)
 In Captain of Industry, power generators only produce what buildings demand. When buildings pause, demand drops and generators throttle down. Unpausing everything at once would create an immediate load shock and cause endless blackout flickering.
-- **10-Second Stability Check:** When the grid satisfies 100% of demand (zero deficit) for 10 continuous seconds, the governor safely unpauses **ONE** single building to test real generator headroom.
+- **10-Second Stability Check:** When the grid satisfies 100% of demand for 10 continuous seconds, the governor safely unpauses **ONE** single building (starting at Priority 1) to test real generator headroom.
 - **Progressive Ramp-Up:** If generators absorb the load smoothly, that building remains active, and 10 seconds later the next building is tested.
 - **Overload Protection & Backoff:** If unpausing triggers a deficit (generators still lack steam/fuel), the building is immediately re-paused within 1 second and the mod enters a 20-second cooldown to let fuel buffers rebuild.
 - **Manual Override:** Click `[Resume All]` at any time to bypass the test and restart all machines immediately.
 
-### 3. Local Machine Inspector Override
-- Clicking any machine on the map opens its inspector with a native **⚡ Power Governor** override panel.
-- **Override Global Threshold:** Toggle to assign custom thresholds to high-priority individual machines.
-- Real-time status display (`● Normal Operation` vs `⏸ Auto-Throttled`).
+### 4. Local Machine Inspector Override
+- Clicking any machine on the map opens its inspector with a native **⚡ Power Governor** panel.
+- **Exempt Toggle:** Easily toggle whether an individual machine is allowed to be paused by the governor.
+- **Priority Indicator:** Displays the machine's in-game priority (`Priority: P{prio} • Shed: P10→P1 | Restored: P1→P10`).
+- Real-time status display (`● Normal Operation` vs `⏸ Auto-Paused`).
 
-### 4. Zero Simulation Overhead
+### 5. Zero Simulation Overhead
 - Leverages the game's internal `ElectricityManager` cached prototype statistics.
 - When the window is closed, there is **zero extra CPU overhead** on tick simulation.
 

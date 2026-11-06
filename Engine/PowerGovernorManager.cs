@@ -58,8 +58,9 @@ namespace PowerThresholdMod.Engine
         public float LastProductionMw { get; private set; }
         public float LastDemandedMw { get; private set; }
         public float LastConsumedMw { get; private set; }
-        public float LastProductionPercent { get; private set; }
-        public bool LastIsDeficit { get; private set; }
+        public float LastDeficitMw { get; private set; }
+        public float LastSurplusMw { get; private set; }
+        public bool LastDemandOutpacesSupply { get; private set; }
 
         public Electricity LastCapacity { get; private set; }
         public Electricity LastProduction { get; private set; }
@@ -74,17 +75,20 @@ namespace PowerThresholdMod.Engine
             LoadSettings();
         }
 
+        public static int GetEntityPriority(LayoutEntity entity)
+        {
+            if (entity == null) return 10;
+            int p = entity.GeneralPriority;
+            return (p > 0) ? p : 10;
+        }
+
         public MachinePowerRule GetGlobalRule(string protoId)
         {
             if (!GlobalRules.TryGetValue(protoId, out var rule))
             {
                 rule = new MachinePowerRule
                 {
-                    IsEnabled = false, // off by default until player enables
-                    Mode = ThresholdMode.Percentage,
-                    PercentThreshold = 20f,
-                    MwThreshold = 50f,
-                    Hysteresis = 2f
+                    IsEnabled = false // off by default until player selects this building
                 };
                 GlobalRules[protoId] = rule;
             }
@@ -101,11 +105,7 @@ namespace PowerThresholdMod.Engine
             {
                 return new MachinePowerRule
                 {
-                    IsEnabled = true, // Custom override is always active when HasOverride is true
-                    Mode = custom.Mode,
-                    PercentThreshold = custom.PercentThreshold,
-                    MwThreshold = custom.MwThreshold,
-                    Hysteresis = custom.Hysteresis
+                    IsEnabled = custom.IsEnabled
                 };
             }
             return GetGlobalRule(entity.Prototype.Id.Value);
@@ -130,18 +130,11 @@ namespace PowerThresholdMod.Engine
             return m_throttledCountsByProto.TryGetValue(protoId, out int cnt) ? cnt : 0;
         }
 
-        public static int GetEntityPriority(LayoutEntity entity)
-        {
-            if (entity == null) return 10;
-            int p = entity.GeneralPriority;
-            return (p > 0) ? p : 10;
-        }
-
         public string GetRecoveryStatusText()
         {
             if (ThrottledCount == 0 && m_lastTestedMachineId <= 0)
             {
-                return "All configured buildings running";
+                return "All selected buildings running";
             }
             if (m_lastTestedMachineId > 0)
             {
@@ -151,7 +144,7 @@ namespace PowerThresholdMod.Engine
             }
             if (m_currentSimStep < m_cooldownUntilStep)
             {
-                return $"⚠️ Grid deficit detected. Backing off ({RecoveryCooldownSeconds}s left)...";
+                return $"⚠️ Shortage detected. Backing off ({RecoveryCooldownSeconds}s left)...";
             }
             return $"⏳ Evaluating grid stability ({RecoveryStableSeconds}s / 10s)...";
         }
@@ -299,11 +292,7 @@ namespace PowerThresholdMod.Engine
                 custom = new MachineInstanceOverride
                 {
                     HasOverride = false,
-                    IsEnabled = true,
-                    Mode = global.Mode,
-                    PercentThreshold = global.PercentThreshold,
-                    MwThreshold = global.MwThreshold,
-                    Hysteresis = global.Hysteresis
+                    IsEnabled = global.IsEnabled
                 };
             }
             return custom;
@@ -323,7 +312,7 @@ namespace PowerThresholdMod.Engine
 
             var concrete = m_electricityManager as ElectricityManager;
 
-            // Capacity: Prefer MaxGenerationCapacity (total grid nameplate) if positive, else GenerationCapacityThisTick
+            // Supply capacity: MaxGenerationCapacity if available, otherwise GenerationCapacityThisTick
             Electricity capacity = (concrete != null && concrete.MaxGenerationCapacity.IsPositive)
                 ? concrete.MaxGenerationCapacity
                 : m_electricityManager.GenerationCapacityThisTick;
@@ -346,16 +335,27 @@ namespace PowerThresholdMod.Engine
             LastDemandedMw = (float)demanded.Value / 1000f;
             LastConsumedMw = (float)consumed.Value / 1000f;
 
-            LastProductionPercent = LastCapacityMw > 0.0001f ? (LastProductionMw / LastCapacityMw) * 100f : 0f;
-            LastIsDeficit = demanded.Value > consumed.Value;
+            // Demand outpaces supply if demanded exceeds generation capacity OR if demanded exceeds delivered power
+            bool demandOutpacesSupply = (demanded.Value > capacity.Value) || (demanded.Value > consumed.Value);
+            LastDemandOutpacesSupply = demandOutpacesSupply;
 
-            // Track stability and handle test-unpause validation
-            if (LastIsDeficit)
+            Electricity effectiveSupply = (capacity.Value < consumed.Value && capacity.IsPositive) ? capacity : consumed;
+            if (effectiveSupply.Value <= 0 && capacity.IsPositive) effectiveSupply = capacity;
+
+            Electricity deficit = (demanded.Value > effectiveSupply.Value)
+                ? (demanded - effectiveSupply)
+                : Electricity.Zero;
+
+            LastDeficitMw = (float)deficit.Value / 1000f;
+            LastSurplusMw = Math.Max(0f, (float)(capacity.Value - demanded.Value) / 1000f);
+
+            // Handle test-unpause validation and grid stability tracking
+            if (demandOutpacesSupply)
             {
-                // Grid is failing to satisfy demand
+                // Demand outpaces supply - reset stability counter
                 m_stableStepCounter = 0;
 
-                // If we were testing a building unpause, it failed!
+                // If a test unpause was in progress, it failed!
                 if (m_lastTestedMachineId > 0)
                 {
                     var testedOpt = m_entitiesManager.GetEntity<LayoutEntity>(new EntityId(m_lastTestedMachineId));
@@ -363,7 +363,7 @@ namespace PowerThresholdMod.Engine
                     {
                         testedOpt.Value.SetPaused(true);
                         m_throttledByMod.Add(m_lastTestedMachineId);
-                        Log.Warning($"PowerGovernor: Test unpause of [P{LastTestedMachinePriority}] {LastTestedMachineName} caused deficit. Re-pausing and setting cooldown.");
+                        Log.Warning($"PowerGovernor: Test unpause of [P{LastTestedMachinePriority}] {LastTestedMachineName} caused demand to outpace supply. Re-pausing and setting cooldown.");
                     }
                     m_lastTestedMachineId = -1;
                     LastTestedMachinePriority = -1;
@@ -374,10 +374,10 @@ namespace PowerThresholdMod.Engine
             }
             else
             {
-                // Grid is satisfying 100% of demand
+                // Supply meets demand comfortably
                 m_stableStepCounter++;
 
-                // If a test unpause completed its observation window successfully
+                // If test unpause observation period completed successfully
                 if (m_lastTestedMachineId > 0 && m_currentSimStep >= m_testExpiresAtStep)
                 {
                     Log.Info($"PowerGovernor: Test unpause of [P{LastTestedMachinePriority}] {LastTestedMachineName} succeeded. Building remains active.");
@@ -388,9 +388,9 @@ namespace PowerThresholdMod.Engine
                 }
             }
 
-            // Periodic evaluation of configured rules (every ~1s, or every 5 steps if actively in deficit)
+            // Periodic evaluation of configured rules (every ~1s, or every 5 steps if actively in shortage)
             m_stepCounter++;
-            bool shouldCheck = (m_stepCounter % CHECK_INTERVAL_STEPS == 0) || (LastIsDeficit && m_stepCounter % 5 == 0);
+            bool shouldCheck = (m_stepCounter % CHECK_INTERVAL_STEPS == 0) || (demandOutpacesSupply && m_stepCounter % 5 == 0);
             if (shouldCheck)
             {
                 m_throttledCountsByProto.Clear();
@@ -432,49 +432,39 @@ namespace PowerThresholdMod.Engine
                     m_throttledByMod.Remove(id);
                 }
 
-                // 2. Scan for active entities whose threshold rule is violated
-                var allEntities = m_entitiesManager.GetAllEntitiesOfType<LayoutEntity>();
-                var candidates = new List<LayoutEntity>();
-
-                foreach (var entity in allEntities)
+                // 2. ONLY engage power check when demand outpaces supply!
+                if (demandOutpacesSupply)
                 {
-                    if (!entity.CanBePaused || !entity.IsNotPaused) continue;
+                    var allEntities = m_entitiesManager.GetAllEntitiesOfType<LayoutEntity>();
+                    var candidates = new List<LayoutEntity>();
 
-                    int entityId = entity.Id.Value;
-                    string protoId = entity.Prototype.Id.Value;
-
-                    if (!InstanceOverrides.ContainsKey(entityId) && !GlobalRules.ContainsKey(protoId))
+                    foreach (var entity in allEntities)
                     {
-                        continue;
-                    }
+                        if (!entity.CanBePaused || !entity.IsNotPaused) continue;
 
-                    var rule = GetEffectiveRule(entity);
-                    if (!rule.IsEnabled) continue;
+                        int entityId = entity.Id.Value;
+                        string protoId = entity.Prototype.Id.Value;
 
-                    float currentMetric = (rule.Mode == ThresholdMode.Percentage) ? LastProductionPercent : LastProductionMw;
-                    float threshold = rule.ThresholdValue;
+                        if (!InstanceOverrides.ContainsKey(entityId) && !GlobalRules.ContainsKey(protoId))
+                        {
+                            continue;
+                        }
 
-                    if (LastIsDeficit || currentMetric < threshold)
-                    {
+                        var rule = GetEffectiveRule(entity);
+                        if (!rule.IsEnabled) continue;
+
                         candidates.Add(entity);
                     }
-                }
 
-                // 3. PRIORITY SHEDDING: Pause lowest priority item first (Priority 10 down to Priority 1)
-                if (candidates.Count > 0)
-                {
-                    var orderedCandidates = candidates
-                        .OrderByDescending(e => GetEntityPriority(e))
-                        .ThenByDescending(e => GetEffectiveRule(e).ThresholdValue)
-                        .ThenBy(e => e.Id.Value)
-                        .ToList();
-
-                    if (LastIsDeficit)
+                    // 3. PRIORITY SHEDDING: Pause selected buildings based on priority number (P10 down to P1) until demand and supply match!
+                    if (candidates.Count > 0)
                     {
-                        // Deficit mode: shed in priority order until deficit is covered
-                        Electricity deficit = (demanded > consumed)
-                            ? (demanded - consumed)
-                            : Electricity.FromKw(1000);
+                        var orderedCandidates = candidates
+                            .OrderByDescending(e => GetEntityPriority(e))
+                            .ThenBy(e => e.Id.Value)
+                            .ToList();
+
+                        Electricity remainingDeficit = deficit.IsPositive ? deficit : Electricity.FromKw(1000);
 
                         foreach (var candidate in orderedCandidates)
                         {
@@ -490,36 +480,21 @@ namespace PowerThresholdMod.Engine
                                 ? m.PowerRequired
                                 : (candidate.Prototype is IProtoWithPowerConsumption pwc ? pwc.ElectricityConsumed : Electricity.Zero);
 
-                            Log.Info($"PowerGovernor: Deficit shed [P{prio}] {candidate.Prototype.Strings.Name} (#{cid}) - Demand: {pwr.Format()}");
+                            Log.Info($"PowerGovernor: Demand outpaced supply. Throttled [P{prio}] {candidate.Prototype.Strings.Name} (#{cid}) - Shed: {pwr.Format()}");
 
-                            deficit -= pwr;
-                            if (!deficit.IsPositive)
+                            remainingDeficit -= pwr;
+                            if (!remainingDeficit.IsPositive)
                             {
-                                break;
+                                break; // Demand and supply are matched!
                             }
                         }
-                    }
-                    else
-                    {
-                        // Normal threshold dip: shed 1 lowest-priority candidate per interval to smooth out response
-                        var candidate = orderedCandidates[0];
-                        int cid = candidate.Id.Value;
-                        int prio = GetEntityPriority(candidate);
-                        var rule = GetEffectiveRule(candidate);
-                        string pid = candidate.Prototype.Id.Value;
-                        float currentMetric = (rule.Mode == ThresholdMode.Percentage) ? LastProductionPercent : LastProductionMw;
-
-                        m_throttledByMod.Add(cid);
-                        candidate.SetPaused(true);
-                        m_throttledCountsByProto[pid] = m_throttledCountsByProto.TryGetValue(pid, out int cnt) ? cnt + 1 : 1;
-
-                        Log.Info($"PowerGovernor: Throttled [P{prio}] {candidate.Prototype.Strings.Name} (#{cid}) - Production: {currentMetric:F1} < {rule.ThresholdValue:F1}");
                     }
                 }
             }
 
-            // AUTO-RECOVERY: If grid has been 100% stable for ~10 seconds (200 steps) and no test is running
+            // AUTO-RECOVERY: If supply satisfies 100% of demand stably for ~10s and no test is running
             if (m_throttledByMod.Count > 0 &&
+                !demandOutpacesSupply &&
                 m_stableStepCounter >= 200 &&
                 m_currentSimStep >= m_cooldownUntilStep &&
                 m_lastTestedMachineId <= 0)
@@ -530,10 +505,9 @@ namespace PowerThresholdMod.Engine
 
         private void attemptTestUnpause()
         {
-            // PRIORITY RESTORATION: Re-enable starting at Priority 1 and slowly increase to Priority 10
+            // PRIORITY RESTORATION: Slowly enable machines in reverse based on priority 1 to 10
             int bestCandidateId = -1;
             int bestPriority = int.MaxValue; // Lower number = higher priority in COI (1 is highest)
-            float bestThreshold = float.MaxValue;
 
             foreach (int id in m_throttledByMod)
             {
@@ -542,13 +516,11 @@ namespace PowerThresholdMod.Engine
 
                 var entity = entityOpt.Value;
                 int prio = GetEntityPriority(entity);
-                var rule = GetEffectiveRule(entity);
 
-                // Prefer highest priority (1 before 2..10). If tied, prefer lowest threshold.
-                if (prio < bestPriority || (prio == bestPriority && rule.ThresholdValue < bestThreshold))
+                // Priority 1 first, then 2, 3... up to 10
+                if (prio < bestPriority)
                 {
                     bestPriority = prio;
-                    bestThreshold = rule.ThresholdValue;
                     bestCandidateId = id;
                 }
             }
@@ -589,8 +561,8 @@ namespace PowerThresholdMod.Engine
                     {
                         string comma = (++i < GlobalRules.Count) ? "," : "";
                         writer.WriteLine(string.Format(CultureInfo.InvariantCulture,
-                            "    \"{0}\": {{ \"enabled\": {1}, \"mode\": {2}, \"percent\": {3:F1}, \"mw\": {4:F1}, \"hysteresis\": {5:F1} }}{6}",
-                            kvp.Key, kvp.Value.IsEnabled.ToString().ToLower(), (int)kvp.Value.Mode, kvp.Value.PercentThreshold, kvp.Value.MwThreshold, kvp.Value.Hysteresis, comma));
+                            "    \"{0}\": {{ \"enabled\": {1} }}{2}",
+                            kvp.Key, kvp.Value.IsEnabled.ToString().ToLower(), comma));
                     }
                     writer.WriteLine("  }");
                     writer.WriteLine("}");
@@ -610,52 +582,20 @@ namespace PowerThresholdMod.Engine
                 if (!File.Exists(path)) return;
 
                 string[] lines = File.ReadAllLines(path);
-                var regexNew = new Regex("\"([^\"]+)\":\\s*\\{\\s*\"enabled\":\\s*(true|false),\\s*\"mode\":\\s*(\\d+),\\s*\"percent\":\\s*([\\d\\.]+),\\s*\"mw\":\\s*([\\d\\.]+)");
-                var regexOld = new Regex("\"([^\"]+)\":\\s*\\{\\s*\"enabled\":\\s*(true|false),\\s*\"mode\":\\s*(\\d+),\\s*\"threshold\":\\s*([\\d\\.]+)");
+                var regex = new Regex("\"([^\"]+)\":\\s*\\{[^}]*\"enabled\":\\s*(true|false)");
 
                 foreach (string line in lines)
                 {
-                    var matchNew = regexNew.Match(line);
-                    if (matchNew.Success)
+                    var match = regex.Match(line);
+                    if (match.Success)
                     {
-                        string protoId = matchNew.Groups[1].Value;
-                        bool enabled = bool.Parse(matchNew.Groups[2].Value);
-                        int mode = int.Parse(matchNew.Groups[3].Value);
-                        float percent = float.Parse(matchNew.Groups[4].Value, CultureInfo.InvariantCulture);
-                        float mw = float.Parse(matchNew.Groups[5].Value, CultureInfo.InvariantCulture);
+                        string protoId = match.Groups[1].Value;
+                        bool enabled = bool.Parse(match.Groups[2].Value);
 
                         GlobalRules[protoId] = new MachinePowerRule
                         {
-                            IsEnabled = enabled,
-                            Mode = (ThresholdMode)mode,
-                            PercentThreshold = Math.Max(0f, Math.Min(100f, percent)),
-                            MwThreshold = Math.Max(0f, mw)
+                            IsEnabled = enabled
                         };
-                        continue;
-                    }
-
-                    var matchOld = regexOld.Match(line);
-                    if (matchOld.Success)
-                    {
-                        string protoId = matchOld.Groups[1].Value;
-                        bool enabled = bool.Parse(matchOld.Groups[2].Value);
-                        int mode = int.Parse(matchOld.Groups[3].Value);
-                        float threshold = float.Parse(matchOld.Groups[4].Value, CultureInfo.InvariantCulture);
-
-                        var rule = new MachinePowerRule
-                        {
-                            IsEnabled = enabled,
-                            Mode = (ThresholdMode)mode
-                        };
-                        if (rule.Mode == ThresholdMode.Percentage)
-                        {
-                            rule.PercentThreshold = Math.Max(0f, Math.Min(100f, threshold));
-                        }
-                        else
-                        {
-                            rule.MwThreshold = Math.Max(0f, threshold);
-                        }
-                        GlobalRules[protoId] = rule;
                     }
                 }
             }
@@ -665,6 +605,7 @@ namespace PowerThresholdMod.Engine
             }
         }
     }
+
     public struct ThrottledBuildingInfo
     {
         public LayoutEntity Entity;
@@ -676,5 +617,3 @@ namespace PowerThresholdMod.Engine
         public int GeneralPriority;
     }
 }
-
-

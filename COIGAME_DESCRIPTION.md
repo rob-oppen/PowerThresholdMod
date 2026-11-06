@@ -4,11 +4,12 @@ An intelligent electrical load-shedding and power management system for your isl
 
 ---
 
-### ⚡ 1. Global Rules Tab
-Configure pause thresholds for every electric consumer on the island—either as a percentage of total grid capacity (**%**) or exact power output (**MW**).
+### ⚡ 1. Building Selection & Demand-Driven Shedding
+Select which building types you want the governor to manage during power shortages—no complex percentage or megawatt math required.
 
-- **Threshold Modes:** Choose between Percentage mode (e.g. pause if capacity drops below 50%) or Megawatt mode (e.g. pause if power drops below 30 MW).
-- **Hysteresis Buffer:** Built-in safety buffer prevents rapid toggling between on and off states.
+- **Zero-Fuss Selection:** Simply check the box for each building type you want to pause (e.g. Arc Furnaces, Computing Data Centers, Research Labs).
+- **Demand-Driven Engagement:** The governor only engages when island electrical demand outpaces generator supply.
+- **Priority-Based Shedding (P10 down to P1):** Pauses lowest priority machines first until power demand and supply match. Critical machines (Priority 1) remain running!
 
 ![Global Rules Window Screenshot](https://raw.githubusercontent.com/rob-oppen/PowerThresholdMod/master/docs/global_rules.png)
 

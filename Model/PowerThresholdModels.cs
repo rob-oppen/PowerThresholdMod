@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 namespace PowerThresholdMod.Model
 {
@@ -11,27 +11,15 @@ namespace PowerThresholdMod.Model
     [Serializable]
     public class MachinePowerRule
     {
-        public bool IsEnabled { get; set; } = true;
-        public ThresholdMode Mode { get; set; } = ThresholdMode.Percentage;
-        public float PercentThreshold { get; set; } = 20.0f; // 0% to 100%
-        public float MwThreshold { get; set; } = 50.0f;      // 0 MW to Capacity MW
-        public float Hysteresis { get; set; } = 2.0f;
+        // When true, governor is allowed to pause this building type when demand outpaces supply
+        public bool IsEnabled { get; set; } = false;
 
-        public float ThresholdValue
-        {
-            get => (Mode == ThresholdMode.Percentage) ? PercentThreshold : MwThreshold;
-            set
-            {
-                if (Mode == ThresholdMode.Percentage)
-                {
-                    PercentThreshold = Math.Max(0f, Math.Min(100f, value));
-                }
-                else
-                {
-                    MwThreshold = Math.Max(0f, value);
-                }
-            }
-        }
+        // Legacy compatibility properties
+        public ThresholdMode Mode { get; set; } = ThresholdMode.Percentage;
+        public float PercentThreshold { get; set; } = 20.0f;
+        public float MwThreshold { get; set; } = 50.0f;
+        public float Hysteresis { get; set; } = 2.0f;
+        public float ThresholdValue { get => PercentThreshold; set => PercentThreshold = value; }
 
         public MachinePowerRule Clone()
         {
@@ -51,26 +39,13 @@ namespace PowerThresholdMod.Model
     {
         public bool HasOverride { get; set; } = false;
         public bool IsEnabled { get; set; } = true;
+
+        // Legacy compatibility properties
         public ThresholdMode Mode { get; set; } = ThresholdMode.Percentage;
         public float PercentThreshold { get; set; } = 20.0f;
         public float MwThreshold { get; set; } = 50.0f;
         public float Hysteresis { get; set; } = 2.0f;
-
-        public float ThresholdValue
-        {
-            get => (Mode == ThresholdMode.Percentage) ? PercentThreshold : MwThreshold;
-            set
-            {
-                if (Mode == ThresholdMode.Percentage)
-                {
-                    PercentThreshold = Math.Max(0f, Math.Min(100f, value));
-                }
-                else
-                {
-                    MwThreshold = Math.Max(0f, value);
-                }
-            }
-        }
+        public float ThresholdValue { get => PercentThreshold; set => PercentThreshold = value; }
 
         public MachineInstanceOverride Clone()
         {
