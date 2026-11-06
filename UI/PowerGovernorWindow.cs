@@ -11,6 +11,8 @@ using Mafi.Core.Entities;
 using Mafi.Core.Entities.Static.Layout;
 using Mafi.Core.Factory.ElectricPower;
 using Mafi.Core.Factory.Machines;
+using Mafi.Core.Factory.Recipes;
+using Mafi.Core.Products;
 using Mafi.Core.Prototypes;
 using Mafi.Core.Syncers;
 using Mafi.Localization;
@@ -50,6 +52,17 @@ namespace PowerThresholdMod.UI
 
         private readonly List<Action> m_rowRefreshActions = new List<Action>();
         private Dictionary<IEntityProto, ElectricityManager.ConsumptionPerProto> m_cachedConsumptionStats;
+
+        private class ProductMetrics
+        {
+            public int BuiltCount;
+            public int PausedCount;
+            public Electricity Consumed = Electricity.Zero;
+            public Electricity MaxPower = Electricity.Zero;
+            public List<int> PausedPriorities = new List<int>();
+        }
+
+        private readonly Dictionary<string, ProductMetrics> m_cachedProductMetrics = new Dictionary<string, ProductMetrics>();
 
         public static bool IsWindowOpen => s_instance != null && s_instance.IsOpen;
 
@@ -117,12 +130,56 @@ namespace PowerThresholdMod.UI
                     s_instance.m_cachedConsumptionStats = statsMap;
                 }
 
+                s_instance.updateCachedProductMetrics();
+
                 foreach (var action in s_instance.m_rowRefreshActions)
                 {
                     action();
                 }
 
                 s_instance.refreshPausedBuildingsIfChanged();
+            }
+        }
+
+        private void updateCachedProductMetrics()
+        {
+            m_cachedProductMetrics.Clear();
+            if (m_manager?.EntitiesManager != null)
+            {
+                var allMachines = m_manager.EntitiesManager.GetAllEntitiesOfType<Machine>();
+                foreach (var machine in allMachines)
+                {
+                    if (!machine.Prototype.ElectricityConsumed.IsPositive && !machine.ElectricityConsumer.HasValue) continue;
+
+                    var outputs = PowerGovernorManager.GetActiveOutputProducts(machine);
+                    if (outputs.Count == 0) continue;
+
+                    bool isThrottled = m_manager.IsMachineThrottled(machine);
+                    int prio = PowerGovernorManager.GetEntityPriority(machine);
+                    Electricity pwr = machine.PowerRequired.IsPositive ? machine.PowerRequired : machine.Prototype.ElectricityConsumed;
+
+                    foreach (var prod in outputs)
+                    {
+                        string pid = prod.Id.Value;
+                        if (!m_cachedProductMetrics.TryGetValue(pid, out var metric))
+                        {
+                            metric = new ProductMetrics();
+                            m_cachedProductMetrics[pid] = metric;
+                        }
+
+                        metric.BuiltCount++;
+                        metric.MaxPower += pwr;
+                        if (isThrottled)
+                        {
+                            metric.PausedCount++;
+                            metric.PausedPriorities.Add(prio);
+                        }
+                        else
+                        {
+                            metric.Consumed += pwr;
+                        }
+                    }
+                }
             }
         }
 
@@ -212,15 +269,19 @@ namespace PowerThresholdMod.UI
                 m_cachedConsumptionStats = statsMap;
             }
 
-            // 2. Tabbed Section: Building Selection, Paused Buildings, and User Guide
+            updateCachedProductMetrics();
+
+            // 2. Tabbed Section: Building Types, Recipe Outputs, Paused Buildings, and User Guide
             var tabContainer = new TabContainer();
             tabContainer.Height(new Px(450));
 
             var rulesContent = buildRulesTab();
+            var recipeOutputsContent = buildRecipeOutputsTab();
             var pausedContent = buildPausedBuildingsTab();
             var guideContent = buildGuideTab();
 
-            tabContainer.AddTab(new LocStrFormatted("⚡ Building Selection"), rulesContent, scroll: false);
+            tabContainer.AddTab(new LocStrFormatted("⚡ Building Types"), rulesContent, scroll: false);
+            tabContainer.AddTab(new LocStrFormatted("📦 Recipe Outputs"), recipeOutputsContent, scroll: false);
             tabContainer.AddTab(new LocStrFormatted("⏸ Paused Buildings"), pausedContent, scroll: false);
             tabContainer.AddTab(new LocStrFormatted("📖 Guide & Help"), guideContent, scroll: false);
 
@@ -407,6 +468,130 @@ namespace PowerThresholdMod.UI
             return scroll;
         }
 
+        private UiComponent buildRecipeOutputsTab()
+        {
+            var scroll = new ScrollColumn().MaxHeight(new Px(410)).AlignItemsStretch();
+
+            // Column Header Row
+            var headerRow = new Row().AlignItemsCenter().Gap(8.px()).PaddingTopBottom(4.px());
+            headerRow.Add(new Label(new LocStrFormatted("Shed")).FontBold().Color(ColorRgba.LightGray).Width(32.px()).NoShrink());
+            headerRow.Add(new Label(LocStrFormatted.Empty).Width(22.px()).NoShrink()); // Icon spacer
+            headerRow.Add(new Label(new LocStrFormatted("Built")).FontBold().Color(ColorRgba.LightGray).Width(38.px()).NoShrink());
+            headerRow.Add(new Label(new LocStrFormatted("Recipe Output")).FontBold().Color(ColorRgba.LightGray).Width(190.px()).NoShrink());
+            headerRow.Add(new Label(new LocStrFormatted("Power Usage")).FontBold().Color(ColorRgba.LightGray).Width(150.px()).NoShrink());
+            headerRow.Add(new Label(new LocStrFormatted("Governor Status (Priority-Based)")).FontBold().Color(ColorRgba.LightGray).MinWidth(new Px(240)));
+            scroll.Add(headerRow);
+
+            // Find all output products produced by electricity-consuming machines
+            var machineProtos = m_protosDb.Filter<MachineProto>(p => p.ElectricityConsumed.IsPositive);
+            var productDict = new Dictionary<string, ProductProto>();
+
+            foreach (var mp in machineProtos)
+            {
+                foreach (var recipe in mp.Recipes)
+                {
+                    foreach (var output in recipe.AllUserVisibleOutputs)
+                    {
+                        if (output.Product != null && !output.Product.Id.Value.StartsWith("__PHANTOM__"))
+                        {
+                            productDict[output.Product.Id.Value] = output.Product;
+                        }
+                    }
+                }
+            }
+
+            var orderedProducts = productDict.Values
+                .OrderBy(p => p.Strings.Name.ToString())
+                .ToList();
+
+            foreach (var product in orderedProducts)
+            {
+                string prodId = product.Id.Value;
+                string prodName = product.Strings.Name.ToString();
+                var rule = m_manager.GetRecipeOutputRule(prodId);
+
+                var row = new Row().AlignItemsCenter().Gap(8.px()).PaddingTopBottom(3.px());
+
+                var chkEnabled = new Toggle(standalone: true).Value(rule.IsEnabled);
+                chkEnabled[1].Visible(false);
+                chkEnabled.Width(32.px()).NoShrink();
+
+                var iconComp = new Icon(product).Size(22.px(), 22.px()).NoShrink();
+
+                var dispCount = new Display().MinDigits(2);
+                dispCount.Width(38.px()).NoShrink();
+
+                var lblName = new Label(new LocStrFormatted(prodName))
+                    .Width(190.px()).NoShrink().NoTextWrap();
+
+                var lblPower = new Label(new LocStrFormatted("-- / --"))
+                    .Width(150.px()).NoShrink().NoTextWrap();
+
+                var lblStatus = new Label(LocStrFormatted.Empty)
+                    .MinWidth(new Px(240)).NoTextWrap();
+
+                chkEnabled.OnValueChanged(val =>
+                {
+                    rule.IsEnabled = val;
+                    if (!val)
+                    {
+                        m_manager.ResumeAllOfRecipeOutput(prodId);
+                    }
+                    m_manager.SaveSettings();
+                    RefreshStatusIfOpen();
+                });
+
+                m_rowRefreshActions.Add(() =>
+                {
+                    m_cachedProductMetrics.TryGetValue(prodId, out var metric);
+                    int totalBuilt = metric?.BuiltCount ?? 0;
+                    int pausedCount = metric?.PausedCount ?? 0;
+                    Electricity totalConsumed = metric?.Consumed ?? Electricity.Zero;
+                    Electricity totalMax = metric?.MaxPower ?? Electricity.Zero;
+
+                    dispCount.SetValue(totalBuilt.ToStringCached().AsLoc());
+
+                    if (totalBuilt > 0)
+                    {
+                        lblPower.Value(new LocStrFormatted($"{totalConsumed.Format()} / {totalMax.Format()}"));
+                        lblPower.Color(totalConsumed.IsPositive ? ColorRgba.White : new ColorRgba(180, 190, 205, 255));
+                    }
+                    else
+                    {
+                        lblPower.Value(new LocStrFormatted("-- / --"));
+                        lblPower.Color(new ColorRgba(120, 130, 150, 180));
+                    }
+
+                    if (!rule.IsEnabled)
+                    {
+                        lblStatus.Value(new LocStrFormatted("Exempt (Always On)"));
+                        lblStatus.Color(new ColorRgba(130, 145, 165, 200));
+                    }
+                    else
+                    {
+                        if (pausedCount > 0 && metric != null && metric.PausedPriorities.Count > 0)
+                        {
+                            int minP = metric.PausedPriorities.Min();
+                            int maxP = metric.PausedPriorities.Max();
+                            string prioSpan = (minP == maxP) ? $"P{minP}" : $"P{minP}..P{maxP}";
+                            lblStatus.Value(new LocStrFormatted($"⏸ {pausedCount}/{totalBuilt} off ({prioSpan})"));
+                            lblStatus.Color(ColorRgba.Orange);
+                        }
+                        else
+                        {
+                            lblStatus.Value(new LocStrFormatted("Active (Protected by P1..P10)"));
+                            lblStatus.Color(new ColorRgba(100, 230, 120, 255));
+                        }
+                    }
+                });
+
+                row.Add(chkEnabled, iconComp, dispCount, lblName, lblPower, lblStatus);
+                scroll.Add(row);
+            }
+
+            return scroll;
+        }
+
         private UiComponent buildPausedBuildingsTab()
         {
             var scroll = new ScrollColumn().MaxHeight(new Px(410)).AlignItemsStretch();
@@ -545,13 +730,21 @@ namespace PowerThresholdMod.UI
                     {
                         badgeComp = new Label(new LocStrFormatted("[ Local Override ]"))
                             .Color(ColorRgba.Cyan)
-                            .MinWidth(new Px(150));
+                            .MinWidth(new Px(130));
                     }
                     else
                     {
                         badgeComp = new Label(new LocStrFormatted("[ Auto-Shed ]"))
                             .Color(ColorRgba.LightBlue)
-                            .MinWidth(new Px(150));
+                            .MinWidth(new Px(130));
+                    }
+
+                    Label recipeBadge = null;
+                    if (!string.IsNullOrEmpty(item.ActiveRecipeOutputsText))
+                    {
+                        recipeBadge = new Label(new LocStrFormatted($"[ {item.ActiveRecipeOutputsText} ]"))
+                            .Color(new ColorRgba(200, 220, 255, 255))
+                            .MinWidth(new Px(130));
                     }
 
                     var btnFocus = new ButtonText(new LocStrFormatted("View"), null).MinWidth(new Px(60));
@@ -573,7 +766,14 @@ namespace PowerThresholdMod.UI
                         RefreshStatusIfOpen();
                     });
 
-                    row.Add(lblId, lblPrio, badgeComp, btnFocus, btnResumeSingle);
+                    if (recipeBadge != null)
+                    {
+                        row.Add(lblId, lblPrio, badgeComp, recipeBadge, btnFocus, btnResumeSingle);
+                    }
+                    else
+                    {
+                        row.Add(lblId, lblPrio, badgeComp, btnFocus, btnResumeSingle);
+                    }
                     instancesCol.Add(row);
                 }
 
@@ -621,9 +821,12 @@ namespace PowerThresholdMod.UI
 
             var p1 = new Label(new LocStrFormatted(
                 "No complicated percentage or megawatt math required:\n\n" +
-                "• 1. Select Buildings: Simply tick the checkbox for each building type you want the governor to pause during shortages (e.g. Arc Furnaces, Computing Data Centers, Research Labs).\n\n" +
+                "• 1. Flexible Selection (Building Types & Recipe Outputs):\n" +
+                "   - ⚡ Building Types: Check entire machine types (e.g. Arc Furnaces, Computing Data Centers, Research Labs) to shed.\n" +
+                "   - 📦 Recipe Outputs: Check specific product outputs (e.g. Steel, Molten Iron, Silicon, Fertilizer). All machines currently configured to produce that product are selected, regardless of which recipe variant is active (e.g. Steel from Iron Ore, Scrap Iron, or Crushed Iron).\n\n" +
                 "• 2. Demand Outpaces Supply: The governor ONLY engages when total island electrical demand exceeds generator supply or when a blackout deficit is detected.\n\n" +
-                "• 3. Priority Shedding (P10 down to P1): When demand outpaces supply, the governor pauses Priority 10 items first, stepping down until demand and supply are balanced. Critical machines (P1) remain running!"
+                "• 3. Priority Shedding (P10 down to P1): When demand outpaces supply, the governor pauses Priority 10 items first, stepping down until demand and supply are balanced. Critical machines (P1) remain running!\n\n" +
+                "• 4. Stepped Restoration (P1 up to P10): When the power grid stabilizes, restoration begins at Priority 1 FIRST, then slowly ramps up to Priority 10."
             ));
             card1.Add(sec1Header, p1);
 

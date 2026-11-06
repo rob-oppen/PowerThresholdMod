@@ -11,6 +11,8 @@ using Mafi.Core.Entities;
 using Mafi.Core.Entities.Static.Layout;
 using Mafi.Core.Factory.ElectricPower;
 using Mafi.Core.Factory.Machines;
+using Mafi.Core.Factory.Recipes;
+using Mafi.Core.Products;
 using Mafi.Core.Prototypes;
 using PowerThresholdMod.Model;
 
@@ -27,6 +29,7 @@ namespace PowerThresholdMod.Engine
         public EntitiesManager EntitiesManager => m_entitiesManager;
 
         public Dictionary<string, MachinePowerRule> GlobalRules { get; } = new Dictionary<string, MachinePowerRule>();
+        public Dictionary<string, RecipeOutputRule> RecipeOutputRules { get; } = new Dictionary<string, RecipeOutputRule>();
         public Dictionary<int, MachineInstanceOverride> InstanceOverrides { get; } = new Dictionary<int, MachineInstanceOverride>();
 
         // Set of entity IDs currently throttled (paused) by our governor
@@ -77,9 +80,11 @@ namespace PowerThresholdMod.Engine
 
         public static int GetEntityPriority(LayoutEntity entity)
         {
-            if (entity == null) return 10;
-            int p = entity.GeneralPriority;
-            return (p > 0) ? p : 10;
+            if (entity == null) return 1;
+            // In Captain of Industry, GeneralPriority is 0-indexed:
+            // 0 is UI Priority 1 (highest priority), 9 is UI Priority 10, etc.
+            // UI Priority number is entity.GeneralPriority + 1.
+            return entity.GeneralPriority + 1;
         }
 
         public MachinePowerRule GetGlobalRule(string protoId)
@@ -98,6 +103,75 @@ namespace PowerThresholdMod.Engine
         public MachinePowerRule GetGlobalRule(LayoutEntityProto proto) => GetGlobalRule(proto.Id.Value);
         public MachinePowerRule GetGlobalRule(MachineProto proto) => GetGlobalRule(proto.Id.Value);
 
+        public RecipeOutputRule GetRecipeOutputRule(string productId)
+        {
+            if (!RecipeOutputRules.TryGetValue(productId, out var rule))
+            {
+                rule = new RecipeOutputRule
+                {
+                    IsEnabled = false // off by default until player selects this recipe output
+                };
+                RecipeOutputRules[productId] = rule;
+            }
+            return rule;
+        }
+
+        public RecipeOutputRule GetRecipeOutputRule(ProductProto product) => GetRecipeOutputRule(product.Id.Value);
+
+        public static List<ProductProto> GetActiveOutputProducts(Machine machine)
+        {
+            var list = new List<ProductProto>();
+            if (machine == null) return list;
+
+            var seen = new HashSet<ProductProto>();
+
+            if (machine.RecipesAssigned.IsNotEmpty())
+            {
+                foreach (var recipe in machine.RecipesAssigned)
+                {
+                    foreach (var output in recipe.AllUserVisibleOutputs)
+                    {
+                        if (output.Product != null && !output.Product.Id.Value.StartsWith("__PHANTOM__") && seen.Add(output.Product))
+                        {
+                            list.Add(output.Product);
+                        }
+                    }
+                }
+            }
+            else if (machine.LastRecipeInProgress.HasValue)
+            {
+                foreach (var output in machine.LastRecipeInProgress.Value.AllUserVisibleOutputs)
+                {
+                    if (output.Product != null && !output.Product.Id.Value.StartsWith("__PHANTOM__") && seen.Add(output.Product))
+                    {
+                        list.Add(output.Product);
+                    }
+                }
+            }
+            else if (machine.Prototype.Recipes.IsNotEmpty())
+            {
+                foreach (var recipe in machine.Prototype.Recipes)
+                {
+                    foreach (var output in recipe.AllUserVisibleOutputs)
+                    {
+                        if (output.Product != null && !output.Product.Id.Value.StartsWith("__PHANTOM__") && seen.Add(output.Product))
+                        {
+                            list.Add(output.Product);
+                        }
+                    }
+                }
+            }
+
+            return list;
+        }
+
+        public static string GetActiveRecipeOutputsSummary(Machine machine)
+        {
+            var products = GetActiveOutputProducts(machine);
+            if (products.Count == 0) return "";
+            return string.Join(", ", products.Select(p => p.Strings.Name.ToString()));
+        }
+
         public MachinePowerRule GetEffectiveRule(LayoutEntity entity)
         {
             int entityId = entity.Id.Value;
@@ -108,7 +182,30 @@ namespace PowerThresholdMod.Engine
                     IsEnabled = custom.IsEnabled
                 };
             }
-            return GetGlobalRule(entity.Prototype.Id.Value);
+
+            // Check Building Global Rule
+            string protoId = entity.Prototype.Id.Value;
+            bool buildingEnabled = GlobalRules.TryGetValue(protoId, out var bRule) && bRule.IsEnabled;
+
+            // Check Recipe Output Rules
+            bool recipeEnabled = false;
+            if (entity is Machine machine)
+            {
+                var outputs = GetActiveOutputProducts(machine);
+                foreach (var product in outputs)
+                {
+                    if (RecipeOutputRules.TryGetValue(product.Id.Value, out var rRule) && rRule.IsEnabled)
+                    {
+                        recipeEnabled = true;
+                        break;
+                    }
+                }
+            }
+
+            return new MachinePowerRule
+            {
+                IsEnabled = buildingEnabled || recipeEnabled
+            };
         }
 
         public MachinePowerRule GetEffectiveRule(Machine machine) => GetEffectiveRule((LayoutEntity)machine);
@@ -219,7 +316,11 @@ namespace PowerThresholdMod.Engine
                 var entityOpt = m_entitiesManager.GetEntity<LayoutEntity>(new EntityId(id));
                 if (entityOpt.HasValue && entityOpt.Value.Prototype.Id.Value == protoId)
                 {
-                    toRemove.Add(id);
+                    var rule = GetEffectiveRule(entityOpt.Value);
+                    if (!rule.IsEnabled)
+                    {
+                        toRemove.Add(id);
+                    }
                 }
             }
 
@@ -237,6 +338,41 @@ namespace PowerThresholdMod.Engine
             Log.Info($"PowerGovernor: Manually resumed all ({toRemove.Count}) paused buildings of prototype '{protoId}'.");
         }
 
+        public void ResumeAllOfRecipeOutput(string productId)
+        {
+            if (m_entitiesManager == null) return;
+
+            var toRemove = new List<int>();
+            foreach (int id in m_throttledByMod)
+            {
+                var entityOpt = m_entitiesManager.GetEntity<LayoutEntity>(new EntityId(id));
+                if (entityOpt.HasValue && entityOpt.Value is Machine machine)
+                {
+                    bool hasProduct = GetActiveOutputProducts(machine).Any(p => p.Id.Value == productId);
+                    if (hasProduct)
+                    {
+                        var rule = GetEffectiveRule(machine);
+                        if (!rule.IsEnabled)
+                        {
+                            toRemove.Add(id);
+                        }
+                    }
+                }
+            }
+
+            foreach (int id in toRemove)
+            {
+                m_throttledByMod.Remove(id);
+                var entityOpt = m_entitiesManager.GetEntity<LayoutEntity>(new EntityId(id));
+                if (entityOpt.HasValue)
+                {
+                    entityOpt.Value.SetPaused(false);
+                }
+            }
+
+            Log.Info($"PowerGovernor: Manually resumed all ({toRemove.Count}) paused buildings for recipe output '{productId}'.");
+        }
+
         public List<ThrottledBuildingInfo> GetThrottledBuildings()
         {
             var list = new List<ThrottledBuildingInfo>();
@@ -250,6 +386,7 @@ namespace PowerThresholdMod.Engine
                 var entity = entityOpt.Value;
                 bool isLocal = InstanceOverrides.TryGetValue(id, out var custom) && custom.HasOverride;
                 var rule = GetEffectiveRule(entity);
+                string recipeSummary = (entity is Machine m) ? GetActiveRecipeOutputsSummary(m) : "";
 
                 list.Add(new ThrottledBuildingInfo
                 {
@@ -259,7 +396,8 @@ namespace PowerThresholdMod.Engine
                     Proto = entity.Prototype,
                     IsLocalOverride = isLocal,
                     EffectiveRule = rule,
-                    GeneralPriority = GetEntityPriority(entity)
+                    GeneralPriority = GetEntityPriority(entity),
+                    ActiveRecipeOutputsText = recipeSummary
                 });
             }
 
@@ -288,11 +426,11 @@ namespace PowerThresholdMod.Engine
             int entityId = entity.Id.Value;
             if (!InstanceOverrides.TryGetValue(entityId, out var custom))
             {
-                var global = GetGlobalRule(entity.Prototype.Id.Value);
+                var rule = GetEffectiveRule(entity);
                 custom = new MachineInstanceOverride
                 {
                     HasOverride = false,
-                    IsEnabled = global.IsEnabled
+                    IsEnabled = rule.IsEnabled
                 };
             }
             return custom;
@@ -442,14 +580,6 @@ namespace PowerThresholdMod.Engine
                     {
                         if (!entity.CanBePaused || !entity.IsNotPaused) continue;
 
-                        int entityId = entity.Id.Value;
-                        string protoId = entity.Prototype.Id.Value;
-
-                        if (!InstanceOverrides.ContainsKey(entityId) && !GlobalRules.ContainsKey(protoId))
-                        {
-                            continue;
-                        }
-
                         var rule = GetEffectiveRule(entity);
                         if (!rule.IsEnabled) continue;
 
@@ -564,6 +694,16 @@ namespace PowerThresholdMod.Engine
                             "    \"{0}\": {{ \"enabled\": {1} }}{2}",
                             kvp.Key, kvp.Value.IsEnabled.ToString().ToLower(), comma));
                     }
+                    writer.WriteLine("  },");
+                    writer.WriteLine("  \"recipeRules\": {");
+                    int j = 0;
+                    foreach (var kvp in RecipeOutputRules)
+                    {
+                        string comma = (++j < RecipeOutputRules.Count) ? "," : "";
+                        writer.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                            "    \"{0}\": {{ \"enabled\": {1} }}{2}",
+                            kvp.Key, kvp.Value.IsEnabled.ToString().ToLower(), comma));
+                    }
                     writer.WriteLine("  }");
                     writer.WriteLine("}");
                 }
@@ -584,18 +724,39 @@ namespace PowerThresholdMod.Engine
                 string[] lines = File.ReadAllLines(path);
                 var regex = new Regex("\"([^\"]+)\":\\s*\\{[^}]*\"enabled\":\\s*(true|false)");
 
+                string currentSection = "rules";
+
                 foreach (string line in lines)
                 {
+                    if (line.Contains("\"rules\""))
+                    {
+                        currentSection = "rules";
+                    }
+                    else if (line.Contains("\"recipeRules\""))
+                    {
+                        currentSection = "recipeRules";
+                    }
+
                     var match = regex.Match(line);
                     if (match.Success)
                     {
-                        string protoId = match.Groups[1].Value;
+                        string id = match.Groups[1].Value;
                         bool enabled = bool.Parse(match.Groups[2].Value);
 
-                        GlobalRules[protoId] = new MachinePowerRule
+                        if (currentSection == "recipeRules")
                         {
-                            IsEnabled = enabled
-                        };
+                            RecipeOutputRules[id] = new RecipeOutputRule
+                            {
+                                IsEnabled = enabled
+                            };
+                        }
+                        else
+                        {
+                            GlobalRules[id] = new MachinePowerRule
+                            {
+                                IsEnabled = enabled
+                            };
+                        }
                     }
                 }
             }
@@ -615,5 +776,6 @@ namespace PowerThresholdMod.Engine
         public bool IsLocalOverride;
         public MachinePowerRule EffectiveRule;
         public int GeneralPriority;
+        public string ActiveRecipeOutputsText;
     }
 }

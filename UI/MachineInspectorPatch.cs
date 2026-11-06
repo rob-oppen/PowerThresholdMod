@@ -103,10 +103,9 @@ namespace PowerThresholdMod.UI
                     });
 
                 // Observe in-game General Priority changes on the machine
-                inspector.Observe(() => (inspector.Entity != null) ? inspector.Entity.GeneralPriority : 10)
-                    .Do((int p) =>
+                inspector.Observe(() => (inspector.Entity != null) ? PowerGovernorManager.GetEntityPriority(inspector.Entity) : 1)
+                    .Do((int prio) =>
                     {
-                        int prio = p > 0 ? p : 10;
                         lblPriority.Value(new LocStrFormatted($"In-Game Priority: P{prio}  •  (Shed: P10→P1  |  Restore: P1→P10)"));
                         lblPriority.Color(GetPriorityColor(prio));
                     });
@@ -124,7 +123,7 @@ namespace PowerThresholdMod.UI
             var effective = PowerGovernorManager.Instance.GetEffectiveRule(machine);
             chkOverride.Value(effective.IsEnabled);
 
-            int prio = machine.GeneralPriority > 0 ? machine.GeneralPriority : 10;
+            int prio = PowerGovernorManager.GetEntityPriority(machine);
             lblPriority.Value(new LocStrFormatted($"In-Game Priority: P{prio}  •  (Shed: P10→P1  |  Restore: P1→P10)"));
             lblPriority.Color(GetPriorityColor(prio));
 

@@ -35,6 +35,21 @@ namespace PowerThresholdMod.Model
     }
 
     [Serializable]
+    public class RecipeOutputRule
+    {
+        // When true, governor is allowed to pause machines producing this recipe output when demand outpaces supply
+        public bool IsEnabled { get; set; } = false;
+
+        public RecipeOutputRule Clone()
+        {
+            return new RecipeOutputRule
+            {
+                IsEnabled = this.IsEnabled
+            };
+        }
+    }
+
+    [Serializable]
     public class MachineInstanceOverride
     {
         public bool HasOverride { get; set; } = false;
