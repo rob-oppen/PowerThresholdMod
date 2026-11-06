@@ -14,7 +14,16 @@ Configure pause thresholds for every electric consumer on the island—either as
 
 ---
 
-### 📊 2. Live Island Telemetry & Power Tracking
+### 🎯 2. Built-in General Priority Integration (P1 - P10)
+Directly leverages Captain of Industry's built-in General Priority system (P1 through P10) to decide which specific machines shut down first and recover first.
+
+- **Priority Shedding (Priority 10 -> Priority 1):** If you have 10 Arc Furnaces and power is insufficient, the governor pauses the Priority 10 machine first, stepping all the way down to Priority 1 last.
+- **Stepped Recovery (Priority 1 -> Priority 10):** As your power grid stabilizes, restoration starts at Priority 1 first, slowly increasing towards Priority 10.
+- **Color-Coded Badges:** View the priority of each paused machine (`[ P10 ]`, `[ P1 ]`) in the Paused Buildings tab and machine inspector.
+
+---
+
+### 📊 3. Live Island Telemetry & Power Tracking
 Keep complete visibility over your island's electrical demand right inside the Governor interface.
 
 - **Built Machine Counter:** Displays the exact count of built, active machines of each type across your entire island (e.g. `[ 9 ] Boilers`, `[ 12 ] Electrolyzers`).

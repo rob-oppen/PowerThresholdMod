@@ -15,16 +15,23 @@ Compatible with vanilla saves — safely added to or removed from existing saves
   - View live grid capacity, production, demand, and net reserve.
   - **Live Island Telemetry:** Displays the exact count of built machines on the island and their live power consumption alongside maximum potential draw (e.g. `36 MW / 81 MW`).
   - Configure pause thresholds per machine type using either **Percentage mode** (`%` of grid capacity) or exact **Megawatt mode** (`MW`).
-  - Real-time status indicators showing how many units are currently throttled or being tested.
+  - Real-time status indicators showing how many units are currently throttled or being tested, including priority span (e.g. `⏸ 3 off (P8..P10)`).
 - **⏸ Paused Buildings Tab:**
   - Grouped overview of all currently throttled machines categorized by building type.
+  - Displays color-coded in-game General Priority badges (`[ P10 ]`, `[ P1 ]`, etc.) indicating shedding and restoration order.
   - Displays whether a machine was paused by a Global Rule or an individual Local Override.
   - Bulk resume buttons (`Resume All [Building]`) or global `Resume All`.
 - **📖 Guide & Help Tab:**
   - In-game strategy guide for configuring priority tiers (Always On critical life-support, Tier I core refining, Tier II manufacturing, Tier III heavy consumers).
-  - Detailed explanation of how Staged Grid Restoration works.
+  - Detailed explanation of how Built-in General Priority Integration and Staged Grid Restoration work.
 
-### 2. Staged Grid Restoration (Blackout Loop Prevention)
+### 2. Built-in General Priority Integration (P1 - P10)
+Rather than pausing all machines of a building type simultaneously, the governor directly reads each machine's in-game **General Priority** (P1 to P10):
+- **Smart Shedding (Priority 10 -> Priority 1):** If power is insufficient (e.g. for 10 Arc Furnaces), the governor pauses the Priority 10 machine first, stepping all the way down to Priority 1 last until grid demand stabilizes.
+- **Stepped Restoration (Priority 1 -> Priority 10):** When grid power recovers, machines are re-enabled starting at Priority 1 first, slowly increasing towards Priority 10.
+- **Zero Configuration:** Simply set the building's priority using the game's built-in priority button (or press `P` to use the priority tool).
+
+### 3. Staged Grid Restoration (Blackout Loop Prevention)
 In Captain of Industry, power generators only produce what buildings demand. When buildings pause, demand drops and generators throttle down. Unpausing everything at once would create an immediate load shock and cause endless blackout flickering.
 - **10-Second Stability Check:** When the grid satisfies 100% of demand (zero deficit) for 10 continuous seconds, the governor safely unpauses **ONE** single building to test real generator headroom.
 - **Progressive Ramp-Up:** If generators absorb the load smoothly, that building remains active, and 10 seconds later the next building is tested.

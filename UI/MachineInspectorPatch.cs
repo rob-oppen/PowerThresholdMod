@@ -1,4 +1,4 @@
-﻿using Label = Mafi.Unity.UiToolkit.Library.Label;
+using Label = Mafi.Unity.UiToolkit.Library.Label;
 using Slider = Mafi.Unity.UiToolkit.Library.Slider;
 using Toggle = Mafi.Unity.UiToolkit.Library.Toggle;
 using System;
@@ -74,8 +74,9 @@ namespace PowerThresholdMod.UI
                 rowSlider.Add(btnMode, slider, lblVal);
 
                 var lblStatus = new Label(new LocStrFormatted("Status: Inheriting Global"));
+                var lblPriority = new Label(new LocStrFormatted("Priority: P10")).Color(ColorRgba.LightBlue);
 
-                panel.BodyAdd(rowOverride, rowSlider, lblStatus);
+                panel.BodyAdd(rowOverride, rowSlider, lblStatus, lblPriority);
                 inspector.MainBody.Add(panel);
                 panel.Visible(false);
 
@@ -88,7 +89,7 @@ namespace PowerThresholdMod.UI
                     custom.HasOverride = val;
                     custom.IsEnabled = val;
                     PowerGovernorManager.Instance.SetInstanceOverride(machine, custom);
-                    refreshMachineControls(machine, chkOverride, slider, lblVal, btnMode, lblStatus);
+                    refreshMachineControls(machine, chkOverride, slider, lblVal, btnMode, lblStatus, lblPriority);
                 });
 
                 // Note: Mafi Slider passes (prevValue, newValue) to OnValueChanged
@@ -131,7 +132,7 @@ namespace PowerThresholdMod.UI
                         return;
                     }
                     panel.Visible(true);
-                    refreshMachineControls(machine, chkOverride, slider, lblVal, btnMode, lblStatus);
+                    refreshMachineControls(machine, chkOverride, slider, lblVal, btnMode, lblStatus, lblPriority);
                 });
 
                 // Observe throttled status in sync with power grid
@@ -144,6 +145,15 @@ namespace PowerThresholdMod.UI
                             updateStatusText(machine, lblStatus);
                         }
                     });
+
+                // Observe in-game General Priority changes on the machine
+                inspector.Observe(() => (inspector.Entity != null) ? inspector.Entity.GeneralPriority : 10)
+                    .Do((int p) =>
+                    {
+                        int prio = p > 0 ? p : 10;
+                        lblPriority.Value(new LocStrFormatted($"Priority: P{prio}  •  (Paused: P10→P1  |  Restored: P1→P10)"));
+                        lblPriority.Color(GetPriorityColor(prio));
+                    });
             }
             catch (Exception ex)
             {
@@ -151,7 +161,7 @@ namespace PowerThresholdMod.UI
             }
         }
 
-        private static void refreshMachineControls(Machine machine, Toggle chkOverride, Slider slider, Label lblVal, ButtonText btnMode, Label lblStatus)
+        private static void refreshMachineControls(Machine machine, Toggle chkOverride, Slider slider, Label lblVal, ButtonText btnMode, Label lblStatus, Label lblPriority)
         {
             if (machine == null || PowerGovernorManager.Instance == null) return;
 
@@ -174,7 +184,18 @@ namespace PowerThresholdMod.UI
             lblVal.Value(new LocStrFormatted(FormatRuleValue(effective)));
             lblVal.Visible(custom.HasOverride);
 
+            int prio = machine.GeneralPriority > 0 ? machine.GeneralPriority : 10;
+            lblPriority.Value(new LocStrFormatted($"Priority: P{prio}  •  (Paused: P10→P1  |  Restored: P1→P10)"));
+            lblPriority.Color(GetPriorityColor(prio));
+
             updateStatusText(machine, lblStatus);
+        }
+
+        private static ColorRgba GetPriorityColor(int priority)
+        {
+            if (priority <= 3) return new ColorRgba(100, 230, 120, 255); // Green (High priority)
+            if (priority <= 7) return new ColorRgba(245, 210, 80, 255);  // Yellow/Amber (Medium priority)
+            return new ColorRgba(255, 120, 100, 255);                    // Red/Coral (Low priority)
         }
 
         private static void updateStatusText(Machine machine, Label lblStatus)

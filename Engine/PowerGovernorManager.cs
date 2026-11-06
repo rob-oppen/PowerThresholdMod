@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -11,6 +11,7 @@ using Mafi.Core.Entities;
 using Mafi.Core.Entities.Static.Layout;
 using Mafi.Core.Factory.ElectricPower;
 using Mafi.Core.Factory.Machines;
+using Mafi.Core.Prototypes;
 using PowerThresholdMod.Model;
 
 namespace PowerThresholdMod.Engine
@@ -46,6 +47,7 @@ namespace PowerThresholdMod.Engine
         public int ThrottledCount => m_throttledByMod.Count;
         public IReadOnlyCollection<int> ThrottledEntityIds => m_throttledByMod;
         public int LastTestedMachineId => m_lastTestedMachineId;
+        public int LastTestedMachinePriority { get; private set; } = -1;
         public string LastTestedMachineName { get; private set; } = "";
         public string LastTestedProtoId { get; private set; } = "";
 
@@ -128,6 +130,13 @@ namespace PowerThresholdMod.Engine
             return m_throttledCountsByProto.TryGetValue(protoId, out int cnt) ? cnt : 0;
         }
 
+        public static int GetEntityPriority(LayoutEntity entity)
+        {
+            if (entity == null) return 10;
+            int p = entity.GeneralPriority;
+            return (p > 0) ? p : 10;
+        }
+
         public string GetRecoveryStatusText()
         {
             if (ThrottledCount == 0 && m_lastTestedMachineId <= 0)
@@ -137,7 +146,8 @@ namespace PowerThresholdMod.Engine
             if (m_lastTestedMachineId > 0)
             {
                 int sec = Math.Max(1, (m_testExpiresAtStep - m_currentSimStep + 19) / 20);
-                return $"🔄 Testing unpause of {LastTestedMachineName}... ({sec}s)";
+                string prioStr = LastTestedMachinePriority > 0 ? $" [P{LastTestedMachinePriority}]" : "";
+                return $"🔄 Testing unpause of {LastTestedMachineName}{prioStr}... ({sec}s)";
             }
             if (m_currentSimStep < m_cooldownUntilStep)
             {
@@ -162,6 +172,7 @@ namespace PowerThresholdMod.Engine
             m_throttledByMod.Clear();
             m_throttledCountsByProto.Clear();
             m_lastTestedMachineId = -1;
+            LastTestedMachinePriority = -1;
             LastTestedMachineName = "";
             LastTestedProtoId = "";
             m_testExpiresAtStep = 0;
@@ -172,6 +183,14 @@ namespace PowerThresholdMod.Engine
         public void ResumeSingleBuilding(int entityId)
         {
             if (m_entitiesManager == null) return;
+
+            if (entityId == m_lastTestedMachineId)
+            {
+                m_lastTestedMachineId = -1;
+                LastTestedMachinePriority = -1;
+                LastTestedMachineName = "";
+                LastTestedProtoId = "";
+            }
 
             if (m_throttledByMod.Remove(entityId))
             {
@@ -192,6 +211,14 @@ namespace PowerThresholdMod.Engine
         public void ResumeAllOfProto(string protoId)
         {
             if (m_entitiesManager == null) return;
+
+            if (LastTestedProtoId == protoId)
+            {
+                m_lastTestedMachineId = -1;
+                LastTestedMachinePriority = -1;
+                LastTestedMachineName = "";
+                LastTestedProtoId = "";
+            }
 
             var toRemove = new List<int>();
             foreach (int id in m_throttledByMod)
@@ -238,11 +265,12 @@ namespace PowerThresholdMod.Engine
                     ProtoId = entity.Prototype.Id.Value,
                     Proto = entity.Prototype,
                     IsLocalOverride = isLocal,
-                    EffectiveRule = rule
+                    EffectiveRule = rule,
+                    GeneralPriority = GetEntityPriority(entity)
                 });
             }
 
-            return list.OrderBy(b => b.Name).ThenBy(b => b.Entity.Id.Value).ToList();
+            return list.OrderBy(b => b.Name).ThenBy(b => b.GeneralPriority).ThenBy(b => b.Entity.Id.Value).ToList();
         }
 
         public void SetInstanceOverride(LayoutEntity entity, MachineInstanceOverride overrideRule)
@@ -335,9 +363,10 @@ namespace PowerThresholdMod.Engine
                     {
                         testedOpt.Value.SetPaused(true);
                         m_throttledByMod.Add(m_lastTestedMachineId);
-                        Log.Warning($"PowerGovernor: Test unpause of {LastTestedMachineName} caused deficit. Re-pausing and setting cooldown.");
+                        Log.Warning($"PowerGovernor: Test unpause of [P{LastTestedMachinePriority}] {LastTestedMachineName} caused deficit. Re-pausing and setting cooldown.");
                     }
                     m_lastTestedMachineId = -1;
+                    LastTestedMachinePriority = -1;
                     LastTestedMachineName = "";
                     LastTestedProtoId = "";
                     m_cooldownUntilStep = m_currentSimStep + 400; // 20s cooldown
@@ -351,68 +380,140 @@ namespace PowerThresholdMod.Engine
                 // If a test unpause completed its observation window successfully
                 if (m_lastTestedMachineId > 0 && m_currentSimStep >= m_testExpiresAtStep)
                 {
-                    Log.Info($"PowerGovernor: Test unpause of {LastTestedMachineName} succeeded. Building remains active.");
+                    Log.Info($"PowerGovernor: Test unpause of [P{LastTestedMachinePriority}] {LastTestedMachineName} succeeded. Building remains active.");
                     m_lastTestedMachineId = -1;
+                    LastTestedMachinePriority = -1;
                     LastTestedMachineName = "";
                     LastTestedProtoId = "";
                 }
             }
 
-            // Periodic evaluation of configured rules
+            // Periodic evaluation of configured rules (every ~1s, or every 5 steps if actively in deficit)
             m_stepCounter++;
-            if (m_stepCounter % CHECK_INTERVAL_STEPS == 0)
+            bool shouldCheck = (m_stepCounter % CHECK_INTERVAL_STEPS == 0) || (LastIsDeficit && m_stepCounter % 5 == 0);
+            if (shouldCheck)
             {
                 m_throttledCountsByProto.Clear();
 
+                // 1. Maintain throttled list: clean up demolished, player-resumed, or disabled-rule entities
+                var toRemove = new List<int>();
+                foreach (int id in m_throttledByMod)
+                {
+                    if (id == m_lastTestedMachineId) continue;
+
+                    var entityOpt = m_entitiesManager.GetEntity<LayoutEntity>(new EntityId(id));
+                    if (!entityOpt.HasValue)
+                    {
+                        toRemove.Add(id);
+                        continue;
+                    }
+
+                    var entity = entityOpt.Value;
+                    var rule = GetEffectiveRule(entity);
+                    if (!rule.IsEnabled)
+                    {
+                        entity.SetPaused(false);
+                        toRemove.Add(id);
+                        continue;
+                    }
+
+                    if (entity.IsNotPaused)
+                    {
+                        toRemove.Add(id); // Player manually resumed in-game
+                        continue;
+                    }
+
+                    string pid = entity.Prototype.Id.Value;
+                    m_throttledCountsByProto[pid] = m_throttledCountsByProto.TryGetValue(pid, out int cnt) ? cnt + 1 : 1;
+                }
+
+                foreach (int id in toRemove)
+                {
+                    m_throttledByMod.Remove(id);
+                }
+
+                // 2. Scan for active entities whose threshold rule is violated
                 var allEntities = m_entitiesManager.GetAllEntitiesOfType<LayoutEntity>();
+                var candidates = new List<LayoutEntity>();
+
                 foreach (var entity in allEntities)
                 {
-                    if (!entity.CanBePaused) continue;
+                    if (!entity.CanBePaused || !entity.IsNotPaused) continue;
 
                     int entityId = entity.Id.Value;
                     string protoId = entity.Prototype.Id.Value;
 
-                    // Fast check: skip entities that have neither custom override nor global rule configured
                     if (!InstanceOverrides.ContainsKey(entityId) && !GlobalRules.ContainsKey(protoId))
                     {
                         continue;
                     }
 
                     var rule = GetEffectiveRule(entity);
-                    if (!rule.IsEnabled)
-                    {
-                        // If previously throttled, restore immediately
-                        if (m_throttledByMod.Contains(entityId))
-                        {
-                            m_throttledByMod.Remove(entityId);
-                            entity.SetPaused(false);
-                        }
-                        continue;
-                    }
+                    if (!rule.IsEnabled) continue;
 
                     float currentMetric = (rule.Mode == ThresholdMode.Percentage) ? LastProductionPercent : LastProductionMw;
                     float threshold = rule.ThresholdValue;
 
-                    bool isThrottled = m_throttledByMod.Contains(entityId);
-
-                    if (isThrottled)
+                    if (LastIsDeficit || currentMetric < threshold)
                     {
-                        m_throttledCountsByProto[protoId] = m_throttledCountsByProto.TryGetValue(protoId, out int cnt) ? cnt + 1 : 1;
+                        candidates.Add(entity);
+                    }
+                }
+
+                // 3. PRIORITY SHEDDING: Pause lowest priority item first (Priority 10 down to Priority 1)
+                if (candidates.Count > 0)
+                {
+                    var orderedCandidates = candidates
+                        .OrderByDescending(e => GetEntityPriority(e))
+                        .ThenByDescending(e => GetEffectiveRule(e).ThresholdValue)
+                        .ThenBy(e => e.Id.Value)
+                        .ToList();
+
+                    if (LastIsDeficit)
+                    {
+                        // Deficit mode: shed in priority order until deficit is covered
+                        Electricity deficit = (demanded > consumed)
+                            ? (demanded - consumed)
+                            : Electricity.FromKw(1000);
+
+                        foreach (var candidate in orderedCandidates)
+                        {
+                            int cid = candidate.Id.Value;
+                            int prio = GetEntityPriority(candidate);
+                            string pid = candidate.Prototype.Id.Value;
+
+                            m_throttledByMod.Add(cid);
+                            candidate.SetPaused(true);
+                            m_throttledCountsByProto[pid] = m_throttledCountsByProto.TryGetValue(pid, out int cnt) ? cnt + 1 : 1;
+
+                            Electricity pwr = (candidate is Machine m && m.PowerRequired.IsPositive)
+                                ? m.PowerRequired
+                                : (candidate.Prototype is IProtoWithPowerConsumption pwc ? pwc.ElectricityConsumed : Electricity.Zero);
+
+                            Log.Info($"PowerGovernor: Deficit shed [P{prio}] {candidate.Prototype.Strings.Name} (#{cid}) - Demand: {pwr.Format()}");
+
+                            deficit -= pwr;
+                            if (!deficit.IsPositive)
+                            {
+                                break;
+                            }
+                        }
                     }
                     else
                     {
-                        // Check if production fell below Threshold
-                        if (currentMetric < threshold)
-                        {
-                            // Only throttle if building is currently active
-                            if (entity.IsNotPaused)
-                            {
-                                m_throttledByMod.Add(entityId);
-                                entity.SetPaused(true);
-                                m_throttledCountsByProto[protoId] = m_throttledCountsByProto.TryGetValue(protoId, out int cnt) ? cnt + 1 : 1;
-                                Log.Info($"PowerGovernor: Throttled {entity.Prototype.Strings.Name} (#{entityId}) - Production: {currentMetric:F1} < {threshold:F1}");
-                            }
-                        }
+                        // Normal threshold dip: shed 1 lowest-priority candidate per interval to smooth out response
+                        var candidate = orderedCandidates[0];
+                        int cid = candidate.Id.Value;
+                        int prio = GetEntityPriority(candidate);
+                        var rule = GetEffectiveRule(candidate);
+                        string pid = candidate.Prototype.Id.Value;
+                        float currentMetric = (rule.Mode == ThresholdMode.Percentage) ? LastProductionPercent : LastProductionMw;
+
+                        m_throttledByMod.Add(cid);
+                        candidate.SetPaused(true);
+                        m_throttledCountsByProto[pid] = m_throttledCountsByProto.TryGetValue(pid, out int cnt) ? cnt + 1 : 1;
+
+                        Log.Info($"PowerGovernor: Throttled [P{prio}] {candidate.Prototype.Strings.Name} (#{cid}) - Production: {currentMetric:F1} < {rule.ThresholdValue:F1}");
                     }
                 }
             }
@@ -429,19 +530,25 @@ namespace PowerThresholdMod.Engine
 
         private void attemptTestUnpause()
         {
-            // Pick one building to test unpause: prefer lowest threshold rule
+            // PRIORITY RESTORATION: Re-enable starting at Priority 1 and slowly increase to Priority 10
             int bestCandidateId = -1;
-            float lowestThreshold = float.MaxValue;
+            int bestPriority = int.MaxValue; // Lower number = higher priority in COI (1 is highest)
+            float bestThreshold = float.MaxValue;
 
             foreach (int id in m_throttledByMod)
             {
                 var entityOpt = m_entitiesManager.GetEntity<LayoutEntity>(new EntityId(id));
                 if (!entityOpt.HasValue) continue;
 
-                var rule = GetEffectiveRule(entityOpt.Value);
-                if (rule.ThresholdValue < lowestThreshold)
+                var entity = entityOpt.Value;
+                int prio = GetEntityPriority(entity);
+                var rule = GetEffectiveRule(entity);
+
+                // Prefer highest priority (1 before 2..10). If tied, prefer lowest threshold.
+                if (prio < bestPriority || (prio == bestPriority && rule.ThresholdValue < bestThreshold))
                 {
-                    lowestThreshold = rule.ThresholdValue;
+                    bestPriority = prio;
+                    bestThreshold = rule.ThresholdValue;
                     bestCandidateId = id;
                 }
             }
@@ -452,6 +559,7 @@ namespace PowerThresholdMod.Engine
                 if (candidateOpt.HasValue)
                 {
                     m_lastTestedMachineId = bestCandidateId;
+                    LastTestedMachinePriority = bestPriority;
                     LastTestedMachineName = candidateOpt.Value.Prototype.Strings.Name.ToString();
                     LastTestedProtoId = candidateOpt.Value.Prototype.Id.Value;
                     m_testExpiresAtStep = m_currentSimStep + 60; // 3 seconds observation window
@@ -459,7 +567,7 @@ namespace PowerThresholdMod.Engine
 
                     m_throttledByMod.Remove(bestCandidateId);
                     candidateOpt.Value.SetPaused(false);
-                    Log.Info($"PowerGovernor: Grid stable for 10s. Testing unpause of {LastTestedMachineName} (#{bestCandidateId}).");
+                    Log.Info($"PowerGovernor: Grid stable for 10s. Testing unpause of [P{bestPriority}] {LastTestedMachineName} (#{bestCandidateId}).");
                 }
             }
         }
@@ -565,6 +673,7 @@ namespace PowerThresholdMod.Engine
         public LayoutEntityProto Proto;
         public bool IsLocalOverride;
         public MachinePowerRule EffectiveRule;
+        public int GeneralPriority;
     }
 }
 

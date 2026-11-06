@@ -439,7 +439,18 @@ namespace PowerThresholdMod.UI
                         int pausedCount = protoList.Sum(p => m_manager.GetThrottledCountForProto(p.Id.Value));
                         if (pausedCount > 0)
                         {
-                            lblStatus.Value(new LocStrFormatted($"⏸ {pausedCount} off"));
+                            var pausedList = m_manager.GetThrottledBuildings().Where(b => protoList.Any(p => p.Id.Value == b.ProtoId)).ToList();
+                            if (pausedList.Count > 0)
+                            {
+                                int minP = pausedList.Min(b => b.GeneralPriority);
+                                int maxP = pausedList.Max(b => b.GeneralPriority);
+                                string prioSpan = (minP == maxP) ? $"P{minP}" : $"P{minP}..P{maxP}";
+                                lblStatus.Value(new LocStrFormatted($"⏸ {pausedCount} off ({prioSpan})"));
+                            }
+                            else
+                            {
+                                lblStatus.Value(new LocStrFormatted($"⏸ {pausedCount} off"));
+                            }
                         }
                         else
                         {
@@ -552,9 +563,13 @@ namespace PowerThresholdMod.UI
                     ? new Icon(pwi).Size(24.px(), 24.px())
                     : new Icon(Assets.Unity.UserInterface.Toolbar.Machines_svg).Size(24.px(), 24.px());
 
-                var lblTitle = new Label(new LocStrFormatted($"{first.Name} ({groupCount} paused)"))
+                int minGroupPrio = group.Min(g => g.GeneralPriority);
+                int maxGroupPrio = group.Max(g => g.GeneralPriority);
+                string groupPrioSpan = (minGroupPrio == maxGroupPrio) ? $"[P{minGroupPrio}]" : $"[P{minGroupPrio}..P{maxGroupPrio}]";
+
+                var lblTitle = new Label(new LocStrFormatted($"{first.Name} ({groupCount} paused  {groupPrioSpan})"))
                     .FontBold()
-                    .MinWidth(new Px(240));
+                    .MinWidth(new Px(250));
 
                 var btnResumeType = new ButtonText(new LocStrFormatted($"Resume All ({groupCount})"), null)
                     .MinWidth(new Px(130));
@@ -578,21 +593,26 @@ namespace PowerThresholdMod.UI
                     var row = new Row().AlignItemsCenter().Gap(8.px()).PaddingTopBottom(2.px());
 
                     var lblId = new Label(new LocStrFormatted($"• #{item.Entity.Id.Value}"))
-                        .MinWidth(new Px(80));
+                        .MinWidth(new Px(75));
+
+                    var lblPrio = new Label(new LocStrFormatted($"[ P{item.GeneralPriority} ]"))
+                        .FontBold()
+                        .Color(GetPriorityColor(item.GeneralPriority))
+                        .MinWidth(new Px(55));
 
                     string ruleValStr = FormatRuleValue(item.EffectiveRule);
                     UiComponent badgeComp;
                     if (item.IsLocalOverride)
                     {
-                        badgeComp = new Label(new LocStrFormatted($"[ Local Override: {ruleValStr} ]"))
+                        badgeComp = new Label(new LocStrFormatted($"[ Local: {ruleValStr} ]"))
                             .Color(ColorRgba.Cyan)
-                            .MinWidth(new Px(250));
+                            .MinWidth(new Px(210));
                     }
                     else
                     {
-                        badgeComp = new Label(new LocStrFormatted($"[ Global Rule: {ruleValStr} ]"))
+                        badgeComp = new Label(new LocStrFormatted($"[ Global: {ruleValStr} ]"))
                             .Color(ColorRgba.LightBlue)
-                            .MinWidth(new Px(250));
+                            .MinWidth(new Px(210));
                     }
 
                     var btnFocus = new ButtonText(new LocStrFormatted("View"), null).MinWidth(new Px(60));
@@ -614,7 +634,7 @@ namespace PowerThresholdMod.UI
                         RefreshStatusIfOpen();
                     });
 
-                    row.Add(lblId, badgeComp, btnFocus, btnResumeSingle);
+                    row.Add(lblId, lblPrio, badgeComp, btnFocus, btnResumeSingle);
                     instancesCol.Add(row);
                 }
 
@@ -712,7 +732,15 @@ namespace PowerThresholdMod.UI
                 titleColor: ColorRgba.Orange
             );
 
-            card2.Add(sec2Header, pTiersIntro, tierAlwaysOn, tier1, tier2, tier3);
+            var priorityBox = createTierBox(
+                iconPath: Assets.Unity.UserInterface.Toolbar.Stats_svg,
+                title: "BUILT-IN GENERAL PRIORITY INTEGRATION (P1 - P10)",
+                buildings: "All configured buildings and machines on your island",
+                desc: "• Game Priority Integration: The governor directly reads the in-game General Priority (P1 to P10) set on each individual building.\n• Smart Shedding (P10 -> P1): If you have multiple machines (e.g. 10 Arc Furnaces) and power is insufficient, Priority 10 items pause FIRST, stepping all the way down to Priority 1 LAST.\n• Stepped Recovery (P1 -> P10): When the power grid stabilizes, restoration begins at Priority 1 FIRST, then slowly ramps up to Priority 10.\n• Quick Setup: Click any machine and set its priority slider, or press 'P' to open the game's built-in priority tool.",
+                titleColor: ColorRgba.LightBlue
+            );
+
+            card2.Add(sec2Header, pTiersIntro, tierAlwaysOn, tier1, tier2, tier3, priorityBox);
 
             // Section 3: How Staged Grid Restoration Works (Blackout Loop Prevention)
             var card3 = createCard();
@@ -811,6 +839,13 @@ namespace PowerThresholdMod.UI
             {
                 m_btnResumeAll.Visible(false);
             }
+        }
+
+        private static ColorRgba GetPriorityColor(int priority)
+        {
+            if (priority <= 3) return new ColorRgba(100, 230, 120, 255); // Green (High priority / restored first)
+            if (priority <= 7) return new ColorRgba(245, 210, 80, 255);  // Yellow/Amber (Medium priority)
+            return new ColorRgba(255, 120, 100, 255);                    // Red/Coral (Low priority / paused first)
         }
 
         private static string FormatRuleValue(MachinePowerRule rule)
